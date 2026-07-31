@@ -42,9 +42,9 @@ def _classify_event(event_type: str) -> str:
 
 
 def segment_episodes(events: list[dict], hard_pause_after_idx: set[int]) -> list[dict]:
-    """Pass 2: scan the events once and emit episodes. RESET is a single event;
+    """Pass 2: scan the events once and emit episodes. RESET is a single event,
     RUN runs until projectEnd (inclusive), another actionful event, or a hard
-    pause; CODE runs through consecutive code events. Soft events are absorbed
+    pause. CODE runs through consecutive code events. Soft events are absorbed
     into the open episode, and orphan soft/unknown events are skipped."""
     episodes: list[dict] = []
     i = 0
@@ -74,7 +74,7 @@ def segment_episodes(events: list[dict], hard_pause_after_idx: set[int]) -> list
             j = i + 1
 
         elif kind == 'RUN':
-            # Extend through soft events; close at projectEnd (inclusive) or
+            # Extend through soft events, close at projectEnd (inclusive) or
             # at the first non-soft event that isn't a continuation, or at a hard pause.
             j = i + 1
             while j < n:
@@ -125,7 +125,7 @@ def segment_episodes(events: list[dict], hard_pause_after_idx: set[int]) -> list
 
 def _detect_inactive_pauses(events: list[dict]) -> list[dict]:
     """Pass 1: turn long idle gaps into INACTIVE_PAUSE hard boundaries. A gap of
-    at least PAUSE_THRESHOLD_S qualifies; gaps that are trivially short or absurdly
+    at least PAUSE_THRESHOLD_S qualifies. Gaps that are trivially short or absurdly
     long (> PAUSE_MAX_S, i.e. across sessions) are ignored."""
     pauses = []
     for i in range(1, len(events)):

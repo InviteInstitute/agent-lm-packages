@@ -2,7 +2,7 @@
 that every trigger reads off of.
 
 Only runProject events count here. Each run after the first gets its distance against
-the run before it; the very first run has nothing to compare to, so its distance is
+the run before it. The very first run has nothing to compare to, so its distance is
 None.
 
 Public API:

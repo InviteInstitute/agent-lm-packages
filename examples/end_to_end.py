@@ -7,8 +7,8 @@ Run it (needs `apted`, which LearnerModels requires):
     python examples/end_to_end.py
 
 It builds a small synthetic session and shows, in order:
-  1. LogParserDeltaEngine, the current workspace as an LLM-ready prompt
-  2. LearnerModels.generate_readable_text, the workspace as readable pseudo-code
+  1. LogParserDeltaEngine, the current workspace as a compact LLM-ready prompt
+  2. LogParserDeltaEngine.generate_readable_text, the workspace as readable pseudo-code
   3. LearnerModels.compute_run_edit_distances, per-run code-change magnitude
   4. LearnerModels.detect_run_triggers_by_playground, the 4 momentary triggers
   5. LearnerModels.segment_session, the session split into episodes + pauses
@@ -22,10 +22,12 @@ from datetime import datetime, timedelta, timezone
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from LogParserDeltaEngine import generate_compact_prompt_from_project
+from LogParserDeltaEngine import (
+    generate_compact_prompt_from_project, generate_readable_text,
+)
 from LearnerModels import (
     compute_run_edit_distances, detect_run_triggers_by_playground,
-    segment_session, generate_readable_text, detect_inactive_trigger,
+    segment_session, detect_inactive_trigger,
 )
 
 # A tiny "program": a hat block driving forward. This is the Blockly workspace XML
@@ -64,21 +66,29 @@ BAR = "=" * 72
 def main():
     # 1. Current workspace as an LLM prompt (from the latest run's project field).
     latest_project = json.dumps(events[-1]["content"]["project"])
-    print(BAR); print("1. LogParserDeltaEngine, current workspace prompt"); print(BAR)
+    print(BAR)
+    print("1. LogParserDeltaEngine, current workspace prompt")
+    print(BAR)
     print(generate_compact_prompt_from_project(latest_project))
 
     # 2. Same workspace, humanized to pseudo-code.
-    print("\n" + BAR); print("2. generate_readable_text, readable pseudo-code"); print(BAR)
+    print("\n" + BAR)
+    print("2. generate_readable_text, readable pseudo-code")
+    print(BAR)
     print(generate_readable_text(WORKSPACE))
 
-    # 3. Per-run edit distances. Identical reruns -> 0; first run has no predecessor.
-    print("\n" + BAR); print("3. compute_run_edit_distances, magnitude per run"); print(BAR)
+    # 3. Per-run edit distances. Identical reruns -> 0, first run has no predecessor.
+    print("\n" + BAR)
+    print("3. compute_run_edit_distances, magnitude per run")
+    print(BAR)
     runs = compute_run_edit_distances(events)["runs"]
     for r in runs:
         print(f"  run {r['index']}: edit_distance={r['edit_distance']}  playground={r['playground']}")
 
     # 4. Momentary triggers. Six identical reruns cross WHEEL_SPIN_ZERO_RUNS (=6).
-    print("\n" + BAR); print("4. detect_run_triggers_by_playground, momentary triggers"); print(BAR)
+    print("\n" + BAR)
+    print("4. detect_run_triggers_by_playground, momentary triggers")
+    print(BAR)
     fires = detect_run_triggers_by_playground(runs)
     if fires:
         for ttype, idx, detail in fires:
@@ -87,14 +97,18 @@ def main():
         print("  (none fired)")
 
     # 5. Episodes + pauses. segment_session reads only event_type + ts.
-    print("\n" + BAR); print("5. segment_session, episodes + pauses"); print(BAR)
+    print("\n" + BAR)
+    print("5. segment_session, episodes + pauses")
+    print(BAR)
     episodes, pauses = segment_session(events)
     pause_summary = [(p.get("episode_type"), round(p.get("duration", 0))) for p in pauses]
     print(f"  {len(episodes)} episodes: {[e.get('episode_type') for e in episodes]}")
     print(f"  {len(pauses)} pauses:   {pause_summary}   (episode_type, duration_s)")
 
     # 6. The sustained inactive trigger, pure: YOU pass in the two facts it needs.
-    print("\n" + BAR); print("6. detect_inactive_trigger, the 5th trigger (DB-free)"); print(BAR)
+    print("\n" + BAR)
+    print("6. detect_inactive_trigger, the 5th trigger (DB-free)")
+    print(BAR)
     now = datetime.now(timezone.utc)
     last_event = now - timedelta(minutes=10)      # student idle 10 min
     fire = detect_inactive_trigger(last_event, now=now, last_inactive_fire=None)

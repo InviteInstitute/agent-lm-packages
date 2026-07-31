@@ -24,7 +24,7 @@ RE_ALERT_SECONDS = 600           # re-alert a still-idle student after this many
 EXPLORER_EDIT_DISTANCE = 13      # a single run with edit_distance >= this -> explorer
 ITERATIVE_EDIT_MIN = 0           # runs with edit_distance > this count toward iterative (so any real edit, >= 1, counts)
 ITERATIVE_DEFAULT_THRESHOLD = 6  # count of such runs that fires iterative
-# Per-playground Step-by-Step thresholds; unlisted playgrounds use the default.
+# Per-playground Step-by-Step thresholds. Unlisted playgrounds use the default.
 ITERATIVE_THRESHOLDS = {"CastleCrasherPlus": 6, "CoralReefRescue": 5, "RoverRescue": 3}
 
 TRIGGER_LABELS = {
@@ -35,7 +35,7 @@ TRIGGER_LABELS = {
 # ==========================================================================
 # Episode segmentation
 # Hard-boundary episode types stop the episodes around them from merging no matter
-# how small the time gap is. Soft events never make an episode on their own; they
+# how small the time gap is. Soft events never make an episode on their own, they
 # just fold into whatever episode is around them.
 # ==========================================================================
 PAUSE_THRESHOLD_S = 300.0             # gap >= this becomes INACTIVE_PAUSE

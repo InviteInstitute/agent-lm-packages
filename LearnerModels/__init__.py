@@ -17,10 +17,11 @@ What you can import:
   detect_run_triggers, detect_run_triggers_by_playground   (triggers)
   is_inactive, detect_inactive_trigger, INACTIVE_RUN_INDEX  (triggers)
   segment_session                 (episodes)
-  generate_readable_text                   (humanize): workspace XML into readable pseudo-code
   cached_edit_distance            (distance)
 
-Needs the `apted` package (see requirements.txt); everything else is stdlib.
+Workspace rendering (compact + readable) lives in LogParserDeltaEngine.
+
+Needs the `apted` package (see requirements.txt). Everything else is stdlib.
 """
 from .run_sequence import compute_run_edit_distances
 from .triggers import (
@@ -28,7 +29,6 @@ from .triggers import (
     is_inactive, detect_inactive_trigger, INACTIVE_RUN_INDEX,
 )
 from .episodes import segment_session
-from .humanize import generate_readable_text
 from .distance import cached_edit_distance
 
 __all__ = [
@@ -39,6 +39,5 @@ __all__ = [
     "detect_inactive_trigger",
     "INACTIVE_RUN_INDEX",
     "segment_session",
-    "generate_readable_text",
     "cached_edit_distance",
 ]

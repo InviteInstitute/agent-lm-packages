@@ -4,7 +4,9 @@ Behavioral signals off a student's VEX event stream: how much their code changes
 the five intervention triggers, and the session broken into episodes. All pure, no DB and
 no framework.
 
-Needs `apted` (`pip install -r requirements.txt`); everything else is stdlib.
+Needs `apted` (`pip install -r requirements.txt`). Everything else is stdlib.
+
+Workspace rendering (compact + readable) lives in `LogParserDeltaEngine`.
 
 ## Pipeline
 
@@ -32,7 +34,7 @@ episodes, pauses = segment_session(events)                     # CODE/RUN/RESET 
 
 ## Output shapes
 
-**`runs`** — list of dicts, one per `runProject` event:
+**`runs`** is a list of dicts, one per `runProject` event:
 
 ```python
 {"index": int,              # 0-based position among runs
@@ -41,14 +43,14 @@ episodes, pauses = segment_session(events)                     # CODE/RUN/RESET 
  "playground": str|None}    # the VEX playground name
 ```
 
-**`fires`** — list of `(trigger_type, run_index, detail)` tuples:
+**`fires`** is a list of `(trigger_type, run_index, detail)` tuples:
 
 ```python
 ("wheel_spin", 6, {"label": "Wheel-spinning", "value": "6 identical reruns"})
 #  trigger_type: str   run_index: int (global)   detail: {"label": str, "value": str}
 ```
 
-**`episodes`** — list of dicts:
+**`episodes`** is a list of dicts:
 
 ```python
 {"episode_type": "CODE"|"RUN"|"RESET",  # kind of episode
@@ -61,7 +63,7 @@ episodes, pauses = segment_session(events)                     # CODE/RUN/RESET 
  "soft_indices": [int]}                  # UI events absorbed into this episode
 ```
 
-**`pauses`** — list of dicts, sorted by `after_idx`:
+**`pauses`** is a list of dicts, sorted by `after_idx`:
 
 ```python
 {"after_idx":     int,                    # the event index before the gap
@@ -84,7 +86,7 @@ All read off each run's integer `edit_distance`, except `inactive`, which is tim
 
 The four momentary ones are pure functions of the edit-distance sequence
 (`detect_run_triggers` / `detect_run_triggers_by_playground`). Thresholds live in
-`constants.py`. Each fire is `(trigger_type, run_index, detail)`; dedupe on `run_index`.
+`constants.py`. Each fire is `(trigger_type, run_index, detail)`. Dedupe on `run_index`.
 
 `detect_run_triggers_by_playground` breaks `runs` into same-playground stretches and runs
 the detection per stretch (counters reset on a playground switch), using each playground's
@@ -119,20 +121,13 @@ The first fire uses `run_index = INACTIVE_RUN_INDEX` (-1), and each re-alert ste
 run_index)` constraint dedupes fires while still letting a student who never comes back
 resurface periodically.
 
-## Two renderers
-
-`humanize.py` is the **readable** renderer (for humans). For a compact, LLM-targeted
-rendering with an `[Active]`/`[Orphaned]` split, use
-`LogParserDeltaEngine.generate_compact_prompt`.
-
 ## Modules
 
 | module | public | notes |
 |---|---|---|
-| `run_sequence.py` | `compute_run_edit_distances` | runProject → workspace XML → AST → per-run distance |
+| `run_sequence.py` | `compute_run_edit_distances` | runProject to workspace XML to AST to per-run distance |
 | `distance.py` | `cached_edit_distance`, `compute_edit_distance` | APTED tree-edit distance, Blockly cost model, XML-pair memo |
 | `ast_builder.py` | `xml_to_block_ast`, `extract_workspace_xml` | Blockly XML into an AST dict |
 | `triggers.py` | `detect_run_triggers[_by_playground]`, `is_inactive`, `detect_inactive_trigger` | all 5 triggers (4 momentary + the inactive DB seam above) |
 | `episodes.py` | `segment_session`, `segment_episodes` | session into episodes + pauses |
-| `humanize.py` | `generate_readable_text`, `generate_readable_lines` | workspace XML into readable pseudo-code (text / list of lines) |
 | `constants.py` | thresholds + APTED costs | one place for all the tunable numbers |

@@ -5,7 +5,7 @@ sequence and are pure functions with no state and no DB, so I can re-run them an
 and get the same answer.
 
   wheel_spin : >= WHEEL_SPIN_ZERO_RUNS zero-edit runs in a row (the student keeps
-               running the same code); goes quiet until a real edit re-arms it.
+               running the same code), goes quiet until a real edit re-arms it.
   resilience : a real edit right after >= RESILIENCE_ZERO_RUNS zeros (they got unstuck).
   explorer   : one run with edit_distance >= EXPLORER_EDIT_DISTANCE (a big rewrite).
   iterative  : ITERATIVE_DEFAULT_THRESHOLD runs with edit_distance > 0 (steady editing).
@@ -34,12 +34,12 @@ def detect_run_triggers(edit_distances, iterative_threshold=ITERATIVE_DEFAULT_TH
     so whoever calls it can re-run it and just dedupe on run_index instead of worrying
     about firing the same thing twice.
 
-      wheel_spin : a run of zeros hits WHEEL_SPIN_ZERO_RUNS; then it stays quiet until
+      wheel_spin : a run of zeros hits WHEEL_SPIN_ZERO_RUNS, then it stays quiet until
                    a non-zero edit re-arms it, so I don't spam it every extra rerun.
       resilience : a non-zero edit right after >= RESILIENCE_ZERO_RUNS zeros.
       explorer   : one run with edit_distance >= EXPLORER_EDIT_DISTANCE.
       iterative  : the running count of edits (> ITERATIVE_EDIT_MIN) hits the
-                   threshold; a zero-edit run resets the count.
+                    threshold. A zero-edit run resets the count.
     """
     out = []
     zero_streak = 0
@@ -129,7 +129,7 @@ def detect_inactive_trigger(last_event_ts, now=None, last_inactive_fire=None):
     Args:
       last_event_ts:      when the session's most recent event happened (aware UTC),
                           or None. You read this from wherever you keep events.
-      now:                current time (aware UTC); defaults to utcnow.
+      now:                current time (aware UTC), defaults to utcnow.
       last_inactive_fire: the last inactive fire for this session as
                           (run_index, fired_at), or None if it's never fired. You read
                           this from wherever you keep triggers.

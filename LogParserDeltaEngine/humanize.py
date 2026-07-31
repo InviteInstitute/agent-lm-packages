@@ -46,7 +46,7 @@ _INFIX = {
     "pg_operator_math": ("MATH", ["NUM1", "NUM2"]),
 }
 
-# Labels for statement slots. The main body doesn't need one; the only slot I label
+# Labels for statement slots. The main body doesn't need one, the only slot I label
 # is the second branch of an if/else, so the "then" side and "else" side don't blur.
 _STMT_LABEL = {"SUBSTACK2": "else"}
 
@@ -125,7 +125,7 @@ def _line(block):
         slot = v.attrib.get("name", "")
         txt = _value_str(v)
         if txt:
-            # A CONDITION reads fine on its own; every other slot keeps its name so
+            # A CONDITION reads fine on its own, every other slot keeps its name so
             # there's some context for what the value is.
             vals.append(txt if slot == "CONDITION" else f"{slot.lower()} {txt}")
     tail = ", ".join(p for p in [", ".join(fields)] + vals if p)

@@ -19,7 +19,7 @@ import xml.etree.ElementTree as ET
 class SmartDeltaEngine:
     # These are the "hat" blocks, the ones that can actually start a program
     # (event handlers, procedure definitions). At the top of the workspace only a
-    # hat counts as live code; anything else just sitting up there is an orphan.
+    # hat counts as live code, anything else just sitting up there is an orphan.
     HAT_BLOCK_PATTERNS = ('events_', 'procedures_definition')
 
     def __init__(self):
@@ -29,8 +29,8 @@ class SmartDeltaEngine:
 
     def process_log(self, log_event):
         """Take one VEX log event and fold it into the workspace I'm tracking. A
-        loadProject/newProject wipes everything and rebuilds from the project XML;
-        the block-level create/move/delete/change events just nudge the maps. If an
+        loadProject/newProject wipes everything and rebuilds from the project XML,
+        and the block-level create/move/delete/change events just nudge the maps. If an
         event is junk or irrelevant I drop it quietly rather than blow up."""
         try:
             content = json.loads(log_event.get('content', '{}'))
@@ -120,8 +120,7 @@ class SmartDeltaEngine:
 
     def _bootstrap_from_xml(self, content):
         """Dump whatever I have and rebuild the maps by walking the project's
-        workspace XML from scratch. A block at the root is only live if it's a hat;
-        as I walk down, every child just inherits whatever its parent's orphan
+        workspace XML from scratch. A block at the root is only live if it's a hat,        as I walk down, every child just inherits whatever its parent's orphan
         status was."""
         self.blocks.clear()
         self.parent_map.clear()
