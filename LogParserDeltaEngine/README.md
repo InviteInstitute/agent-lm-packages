@@ -11,7 +11,7 @@ Stdlib only (`json`, `xml.etree`), nothing to install.
 
 ```python
 from LogParserDeltaEngine import (
-    SmartDeltaEngine, generate_compact_prompt,
+    smart_delta_engine, generate_compact_prompt,
     generate_readable_text, generate_readable_lines,
 )
 ```
@@ -29,7 +29,7 @@ prompt = generate_compact_prompt(xml_string)
 they land.
 
 ```python
-engine = SmartDeltaEngine()
+engine = smart_delta_engine()
 for log_event in events:              # each: {"content": <json str or dict>, ...}
     engine.process_log(log_event)
 engine.get_runnable_block_count()     # int: blocks reachable from a hat block
@@ -50,10 +50,10 @@ generate_readable_lines(xml_string)   # list[str], same content as a list
 | Symbol | Input | Output |
 |---|---|---|
 | `generate_compact_prompt(xml_string)` | workspace XML `str` (or `None`) | pseudo-code `str`, or `None` if empty/unparseable |
-| `SmartDeltaEngine().process_log(log_event)` | dict with a `content` key (JSON str or dict) | `None` (mutates engine state) |
-| `SmartDeltaEngine().get_runnable_block_count()` | none | `int` (non-shadow blocks reachable from a hat) |
-| `SmartDeltaEngine().get_total_blocks()` | none | `int` (all non-shadow blocks tracked) |
-| `SmartDeltaEngine().generate_compact_prompt()` | none | `str` (the compact pseudo-code listing) |
+| `smart_delta_engine().process_log(log_event)` | dict with a `content` key (JSON str or dict) | `None` (mutates engine state) |
+| `smart_delta_engine().get_runnable_block_count()` | none | `int` (non-shadow blocks reachable from a hat) |
+| `smart_delta_engine().get_total_blocks()` | none | `int` (all non-shadow blocks tracked) |
+| `smart_delta_engine().generate_compact_prompt()` | none | `str` (the compact pseudo-code listing) |
 | `generate_readable_text(xml_string)` | workspace XML `str` | readable pseudo-code `str` (empty string if blank/broken) |
 | `generate_readable_lines(xml_string)` | workspace XML `str` | `list[str]`, one line per stackable block (empty list if blank/broken) |
 
@@ -119,6 +119,32 @@ Anything it can't parse is dropped quietly (no exceptions).
 or a dict) that carries `eventType` and either `blockEventData` (for deltas) or `project`
 (for load/new). All three standalone renderers (`generate_compact_prompt`,
 `generate_readable_text`, `generate_readable_lines`) take a workspace XML string directly.
+
+### What is the workspace XML?
+
+A VEX log event carries a `content.project.workspace` field that holds the student's
+block program as an XML string. That XML is what all three renderers accept:
+
+```xml
+<xml>
+  <block type="pg_events_when_started" id="hat">
+    <next>
+      <block type="pg_drivetrain_drive_for" id="drive">
+        <field name="DIRECTION">fwd</field>
+        <field name="UNITS">mm</field>
+        <value name="AMOUNT">
+          <shadow type="math_number"><field name="NUM">200</field></shadow>
+        </value>
+      </block>
+    </next>
+  </block>
+</xml>
+```
+
+Each `<block>` is a VEX block with a `type`, optional `id`/`x`/`y` attributes, `<field>`
+children for parameters (direction, units), `<value>` children for inline inputs (numbers,
+sensor reads), and `<statement>`/`<next>` children for nested or chained blocks. Shadow
+blocks inside `<value>` slots hold default literals (the `200` in "drive 200mm").
 
 ### `create` event payload
 

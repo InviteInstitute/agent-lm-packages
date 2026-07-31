@@ -41,7 +41,7 @@ so which one is needed is readable off the call.
 
 | Renderer | Audience | What it does |
 |---|---|---|
-| `generate_compact_prompt` (standalone) / `SmartDeltaEngine.generate_compact_prompt()` (method) | LLM | Token-cheap listing split into `[Active]` (reachable from a hat block) and `[Orphaned]`. Strips noisy `pg_`/`aim_`/`mixed_` prefixes. No name lookup. Value-slot literals (drive distance, turn degrees) folded into parent fields. |
+| `generate_compact_prompt` (standalone) / `smart_delta_engine.generate_compact_prompt()` (method) | LLM | Token-cheap listing split into `[Active]` (reachable from a hat block) and `[Orphaned]`. Strips noisy `pg_`/`aim_`/`mixed_` prefixes. No name lookup. Value-slot literals (drive distance, turn degrees) folded into parent fields. |
 | `generate_readable_text` / `generate_readable_lines` | Human | Full display names from `vex_blocks.json`, infix operators (`A < B`), tidied enums (`fwd` to `forward`), inline reporter values, `else:` branch labels. No active/orphan split. |
 
 Use **compact** when building an LLM prompt (spend tokens on structure, not prose). Use

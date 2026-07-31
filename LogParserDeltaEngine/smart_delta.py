@@ -14,7 +14,7 @@ import json
 import xml.etree.ElementTree as ET
 
 
-class SmartDeltaEngine:
+class smart_delta_engine:
     # These are the "hat" blocks, the ones that can actually start a program
     # (event handlers, procedure definitions). At the top of the workspace only a
     # hat counts as live code, anything else just sitting up there is an orphan.
@@ -391,7 +391,7 @@ def generate_compact_prompt(xml_string):
     if not xml_string:
         return None
 
-    engine = SmartDeltaEngine()
+    engine = smart_delta_engine()
 
     # Wrap the XML in a fake project dict so _bootstrap_from_xml can be reused.
     engine._bootstrap_from_xml({'project': {'workspace': xml_string}})
