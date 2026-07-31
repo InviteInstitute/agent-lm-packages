@@ -55,12 +55,15 @@ def xml_to_block_ast(xml_string, keep_shadow=False):
     """Parse workspace XML into {nodes, edges, roots}. nodes maps a block id to its
     type and fields, edges record the parent/child links (tagged by connection kind,
     value/statement/next, plus the slot), and roots lists the top-level blocks. Shadow
-    blocks are dropped unless keep_shadow is set, and blank input returns an empty
-    AST instead of raising."""
+    blocks are dropped unless keep_shadow is set, and blank or malformed input returns
+    an empty AST instead of raising."""
     if not xml_string:
         return {"nodes": {}, "edges": [], "roots": []}
 
-    root = _parse_xml_string(xml_string)
+    try:
+        root = _parse_xml_string(xml_string)
+    except ET.ParseError:
+        return {"nodes": {}, "edges": [], "roots": []}
     nodes, edges, roots = {}, [], []
 
     def register(block_elem):
