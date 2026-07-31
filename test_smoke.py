@@ -1,7 +1,7 @@
 """Test suite for LogParserDeltaEngine and LearnerModels.
 
 Run with: python test_smoke.py
-Needs `apted` (LearnerModels).
+Requires `apted` (installed automatically with `pip install .`).
 """
 import json
 from datetime import datetime, timedelta, timezone

@@ -4,7 +4,8 @@ Behavioral signals off a student's VEX event stream: how much their code changes
 the five intervention triggers, and the session broken into episodes. All pure, no DB and
 no framework.
 
-Needs `apted` (`pip install -r requirements.txt`). Everything else is stdlib.
+Needs `apted` (installed automatically with `pip install .` from the repo root).
+Everything else is stdlib.
 
 Workspace rendering (compact + readable) lives in `LogParserDeltaEngine`.
 

@@ -6,7 +6,7 @@ stream into things an agent can act on: the current workspace, behavioral trigge
 data in and returns plain data back, so any host (reflecks, the agent server, a notebook)
 can drive them.
 
-Each folder is an independent, `pip`-installable package with its own README.
+Each folder has its own README. Install both with `pip install .` from the repo root.
 
 ## The three packages
 

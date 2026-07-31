@@ -1,9 +1,8 @@
 """
 End-to-end walkthrough: one VEX student event stream -> everything the packages produce.
 
-Run it (needs `apted`, which LearnerModels requires):
+Run it (from the repo root, after `pip install .`):
 
-    pip install apted
     python examples/end_to_end.py
 
 It builds a small synthetic session and shows, in order:
