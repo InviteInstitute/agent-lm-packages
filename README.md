@@ -44,6 +44,9 @@ so which one is needed is readable off the call.
 | `generate_compact_prompt` (standalone) / `smart_delta_engine.generate_compact_prompt()` (method) | LLM | Token-cheap listing split into `[Active]` (reachable from a hat block) and `[Orphaned]`. Strips noisy `pg_`/`aim_`/`mixed_` prefixes. No name lookup. Value-slot literals (drive distance, turn degrees) folded into parent fields. |
 | `generate_readable_text` / `generate_readable_lines` | Human | Full display names from `vex_blocks.json`, infix operators (`A < B`), tidied enums (`fwd` to `forward`), inline reporter values, `else:` branch labels. No active/orphan split. |
 
+Each renderer also has a `_from_content` variant that takes a parsed VEX log content dict
+and extracts the workspace XML internally (e.g. `generate_compact_prompt_from_content`).
+
 Use **compact** when building an LLM prompt (spend tokens on structure, not prose). Use
 **readable** when showing the code to a person.
 
@@ -65,6 +68,7 @@ Each function reads only what it needs:
 | `detect_run_triggers_by_playground(runs)` | the `runs` list above | `[(trigger_type, run_index, detail)]` |
 | `segment_session(events)` | every event's `event_type` + `ts` (ignores `content`) | `(episodes, pauses)` |
 | `generate_compact_prompt(xml_string)` | one workspace XML string | pseudo-code `str`, or `None` if empty |
+| `generate_compact_prompt_from_content(content)` | parsed VEX log content dict | pseudo-code `str`, or `None` if empty |
 
 The host supplies these (an adapter from wherever events are stored). Nothing in here
 touches a DB. The one stateful trigger, `inactive`, leaves its two DB touch-points to the
@@ -75,10 +79,8 @@ that feeds one event stream through both packages.
 
 ## Install / test
 
-Each folder is self-contained (relative imports). From this directory:
-
 ```bash
-pip install apted                       # only LearnerModels needs it
-python test_smoke.py                    # fast assertions across the cores
-python examples/end_to_end.py           # narrated walkthrough with real output
+pip install .                            # installs both packages (pulls in apted)
+python test_smoke.py                     # 34 tests across both packages
+python examples/end_to_end.py            # narrated walkthrough with real output
 ```

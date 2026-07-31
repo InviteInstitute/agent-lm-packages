@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "agent-lm-packages"
+version = "0.1.0"
+description = "VEX event stream packages for agent-driven learning"
+requires-python = ">=3.9"
+dependencies = ["apted>=1.0"]
+
+[project.optional-dependencies]
+log-parser = []
+learner-models = ["apted>=1.0"]
+
+[tool.setuptools]
+packages = ["LogParserDeltaEngine", "LearnerModels"]
+
+[tool.setuptools.package-data]
+LogParserDeltaEngine = ["vex_blocks.json"]

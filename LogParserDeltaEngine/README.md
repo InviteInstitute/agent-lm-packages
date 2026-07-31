@@ -11,7 +11,7 @@ Stdlib only (`json`, `xml.etree`), nothing to install.
 
 ```python
 from LogParserDeltaEngine import (
-    smart_delta_engine, generate_compact_prompt,
+    smart_delta_engine, generate_compact_prompt, generate_compact_prompt_from_content,
     generate_readable_text, generate_readable_lines,
 )
 ```
@@ -25,7 +25,15 @@ prompt = generate_compact_prompt(xml_string)
 # or None if the workspace has no blocks
 ```
 
-**2. Compact prompt incrementally from an event stream** (LLM). Replay the deltas as
+**2. Compact prompt from a VEX log content dict** (LLM). Skips the manual XML
+extraction.
+
+```python
+prompt = generate_compact_prompt_from_content(content)
+# content is the parsed "content" field of a VEX log event
+```
+
+**3. Compact prompt incrementally from an event stream** (LLM). Replay the deltas as
 they land.
 
 ```python
@@ -37,7 +45,7 @@ engine.get_total_blocks()             # int: all non-shadow blocks tracked
 engine.generate_compact_prompt()      # str: same [Active]/[Orphaned] pseudo-code
 ```
 
-**3. Readable pseudo-code from workspace XML** (human). Full block names, infix
+**4. Readable pseudo-code from workspace XML** (human). Full block names, infix
 operators, inline values.
 
 ```python
@@ -50,6 +58,7 @@ generate_readable_lines(xml_string)   # list[str], same content as a list
 | Symbol | Input | Output |
 |---|---|---|
 | `generate_compact_prompt(xml_string)` | workspace XML `str` (or `None`) | pseudo-code `str`, or `None` if empty/unparseable |
+| `generate_compact_prompt_from_content(content)` | parsed VEX log content dict | pseudo-code `str`, or `None` if no workspace |
 | `smart_delta_engine().process_log(log_event)` | dict with a `content` key (JSON str or dict) | `None` (mutates engine state) |
 | `smart_delta_engine().get_runnable_block_count()` | none | `int` (non-shadow blocks reachable from a hat) |
 | `smart_delta_engine().get_total_blocks()` | none | `int` (all non-shadow blocks tracked) |
