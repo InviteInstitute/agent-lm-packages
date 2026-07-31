@@ -384,21 +384,17 @@ class SmartDeltaEngine:
         return "\n".join(lines)
 
 
-def generate_compact_prompt_from_project(project_json_str):
-    """Shortcut for when only a project blob (the `project` field off a VEX log) is
-    available and the prompt is needed in one call. Creates a fresh engine,
+def generate_compact_prompt(xml_string):
+    """One-shot compact prompt from a workspace XML string. Creates a fresh engine,
     bootstraps it, and returns the rendered prompt. Returns None if there's no
-    input or the project has no blocks."""
-    if project_json_str is None:
+    input or the workspace has no blocks."""
+    if not xml_string:
         return None
 
     engine = SmartDeltaEngine()
 
-    # Fake up a loadProject event to reuse _bootstrap_from_xml as-is.
-    engine._bootstrap_from_xml({
-        'eventType': 'loadProject',
-        'project': project_json_str
-    })
+    # Wrap the XML in a fake project dict so _bootstrap_from_xml can be reused.
+    engine._bootstrap_from_xml({'project': {'workspace': xml_string}})
 
     if not engine.blocks:
         return None

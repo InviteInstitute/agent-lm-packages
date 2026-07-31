@@ -11,22 +11,22 @@ Stdlib only (`json`, `xml.etree`), nothing to install.
 
 ```python
 from LogParserDeltaEngine import (
-    SmartDeltaEngine, generate_compact_prompt_from_project,
+    SmartDeltaEngine, generate_compact_prompt,
     generate_readable_text, generate_readable_lines,
 )
 ```
 
-**1. Compact prompt from a project blob** (LLM). The common case: a student's latest
-`project` field off a VEX log.
+**1. Compact prompt from workspace XML** (LLM). One-shot: pass the workspace XML
+string, get back the prompt.
 
 ```python
-prompt = generate_compact_prompt_from_project(project_json_str)
+prompt = generate_compact_prompt(xml_string)
 # "[Active]\n whenStarted\n  drive_for(DIRECTION=fwd,UNITS=mm,AMOUNT=200)\n[Orphaned]\n (empty)"
-# or None if the project has no blocks
+# or None if the workspace has no blocks
 ```
 
-**2. Compact prompt incrementally from an event stream** (LLM). Replay the deltas as they
-land.
+**2. Compact prompt incrementally from an event stream** (LLM). Replay the deltas as
+they land.
 
 ```python
 engine = SmartDeltaEngine()
@@ -49,7 +49,7 @@ generate_readable_lines(xml_string)   # list[str], same content as a list
 
 | Symbol | Input | Output |
 |---|---|---|
-| `generate_compact_prompt_from_project(project_json_str)` | `project` field as a JSON string (or `None`) | pseudo-code `str`, or `None` if empty/unparseable |
+| `generate_compact_prompt(xml_string)` | workspace XML `str` (or `None`) | pseudo-code `str`, or `None` if empty/unparseable |
 | `SmartDeltaEngine().process_log(log_event)` | dict with a `content` key (JSON str or dict) | `None` (mutates engine state) |
 | `SmartDeltaEngine().get_runnable_block_count()` | none | `int` (non-shadow blocks reachable from a hat) |
 | `SmartDeltaEngine().get_total_blocks()` | none | `int` (all non-shadow blocks tracked) |
@@ -117,8 +117,8 @@ Anything it can't parse is dropped quietly (no exceptions).
 
 `process_log` wants a dict with a `content` key holding the VEX log content (a JSON string
 or a dict) that carries `eventType` and either `blockEventData` (for deltas) or `project`
-(for load/new). `generate_compact_prompt_from_project` takes the `project` field straight,
-as a JSON string. The readable renderers take a workspace XML string directly.
+(for load/new). All three standalone renderers (`generate_compact_prompt`,
+`generate_readable_text`, `generate_readable_lines`) take a workspace XML string directly.
 
 ### `create` event payload
 

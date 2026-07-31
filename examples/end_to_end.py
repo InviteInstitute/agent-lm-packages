@@ -16,14 +16,13 @@ It builds a small synthetic session and shows, in order:
 
 Everything below is plain data in, plain data out, no DB, no framework.
 """
-import json
 from datetime import datetime, timedelta, timezone
 
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from LogParserDeltaEngine import (
-    generate_compact_prompt_from_project, generate_readable_text,
+    generate_compact_prompt, generate_readable_text,
 )
 from LearnerModels import (
     compute_run_edit_distances, detect_run_triggers_by_playground,
@@ -64,12 +63,11 @@ BAR = "=" * 72
 
 
 def main():
-    # 1. Current workspace as an LLM prompt (from the latest run's project field).
-    latest_project = json.dumps(events[-1]["content"]["project"])
+    # 1. Current workspace as a compact LLM prompt.
     print(BAR)
     print("1. LogParserDeltaEngine, current workspace prompt")
     print(BAR)
-    print(generate_compact_prompt_from_project(latest_project))
+    print(generate_compact_prompt(WORKSPACE))
 
     # 2. Same workspace, humanized to pseudo-code.
     print("\n" + BAR)
