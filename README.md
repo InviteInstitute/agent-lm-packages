@@ -87,6 +87,11 @@ Recent changes to the package layout and naming:
 - **`BlocklyConfig` renamed to `VexConfig`.** Internal class in `LearnerModels/distance.py`.
 - **"Blockly" dropped everywhere.** The docs and code say "VEX" throughout.
 - **No em dashes or semicolons** in any prose (docs or code comments).
+- **Compact renderer data fix.** The compact prompt now captures value-slot literals
+  (drive distance, turn degrees, wait duration, comparison thresholds) that were
+  previously dropped. Shadow blocks are tracked, initial fields on create events are
+  captured, field changes on shadows propagate to the parent, and orphan status is
+  recomputed on every delta move.
 
 If you imported `humanize_text` from `LearnerModels`, switch to
 `from LogParserDeltaEngine import generate_readable_text`.

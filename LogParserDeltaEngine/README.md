@@ -64,7 +64,8 @@ The compact prompt has two sections:
 ```
 [Active]
  <block_type>(<field>=<val>,...)
-  <child_block_type>(...)
+  <child_block_type>(<field>=<val>,...)
+  <reporter_type>(<field>=<val>,...)
 [Orphaned]
  <block_type>(...)
 ```
@@ -74,6 +75,10 @@ The compact prompt has two sections:
   not wired to a hat. Either section shows ` (empty)` when it has nothing.
 - Each block prints its type (noisy VEX prefixes `pg_`/`aim_`/`mixed_` stripped to save
   tokens) and its `field=value` pairs, indented by nesting depth.
+- Value-slot literals (drive distance, turn degrees, wait duration) are folded into the
+  parent block's fields, e.g. `(DIRECTION=fwd,UNITS=mm,AMOUNT=200)`.
+- Reporter blocks inside value slots (conditions, sensor reads) render as indented
+  children, same as loop bodies and next-chain blocks.
 
 ## Readable output format
 
