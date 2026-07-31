@@ -17,7 +17,7 @@ What you can import:
   detect_run_triggers, detect_run_triggers_by_playground   (triggers)
   is_inactive, detect_inactive_trigger, INACTIVE_RUN_INDEX  (triggers)
   segment_session                 (episodes)
-  humanize_text                   (humanize): workspace XML into readable pseudo-code
+  generate_readable_text                   (humanize): workspace XML into readable pseudo-code
   cached_edit_distance            (distance)
 
 Needs the `apted` package (see requirements.txt); everything else is stdlib.
@@ -28,7 +28,7 @@ from .triggers import (
     is_inactive, detect_inactive_trigger, INACTIVE_RUN_INDEX,
 )
 from .episodes import segment_session
-from .humanize import humanize_text
+from .humanize import generate_readable_text
 from .distance import cached_edit_distance
 
 __all__ = [
@@ -39,6 +39,6 @@ __all__ = [
     "detect_inactive_trigger",
     "INACTIVE_RUN_INDEX",
     "segment_session",
-    "humanize_text",
+    "generate_readable_text",
     "cached_edit_distance",
 ]

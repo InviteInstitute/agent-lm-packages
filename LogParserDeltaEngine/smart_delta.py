@@ -6,7 +6,7 @@ There are two ways in: replay the create/move/delete/change events one at a time
 they stream in, or bootstrap straight from a project's saved workspace XML. Either
 path lands in the same place, three flat maps: every block, who's parented to whom,
 and which blocks are "orphans" (not wired up under a hat block, so they'll never run).
-generate_llm_prompt turns that into a short pseudo-code listing that's cheap to hand
+generate_compact_prompt turns that into a short pseudo-code listing that's cheap to hand
 to an LLM.
 
 Stdlib only (json + xml.etree) on purpose. I didn't want to pull in a dependency just
@@ -221,7 +221,7 @@ class SmartDeltaEngine:
     def get_total_blocks(self):
         return len(self.blocks)
 
-    def generate_llm_prompt(self):
+    def generate_compact_prompt(self):
         """Render the workspace as compact pseudo-code the LLM can read. I split the
         root blocks into two sections, [Active] (reachable from a hat) and
         [Orphaned], and print each block with its fields, indented by how deep it
@@ -282,7 +282,7 @@ class SmartDeltaEngine:
         return "\n".join(lines)
 
 
-def generate_llm_prompt_from_project(project_json_str):
+def generate_compact_prompt_from_project(project_json_str):
     """Shortcut for when I just have a project blob (the `project` field off a VEX
     log) and want the prompt in one call. Spins up a fresh engine, bootstraps it,
     and hands back the rendered prompt. Gives None if there's no input or the
@@ -301,4 +301,4 @@ def generate_llm_prompt_from_project(project_json_str):
     if not engine.blocks:
         return None
 
-    return engine.generate_llm_prompt()
+    return engine.generate_compact_prompt()

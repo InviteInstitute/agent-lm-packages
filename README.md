@@ -1,10 +1,10 @@
 # agent-lm-packages
 
-Three small, **pure** Python packages that take a VEX (VEXcode VR) student's block
-event stream and turn it into things an agent can act on: the current workspace,
-behavioral triggers, and (later) a goal/strategy layer. No database, no web framework.
-Each package takes plain data in and hands plain data back, so any host (reflecks, the
-agent server, a notebook) can drive them.
+Three small, **pure** Python packages that turn a VEX (VEXcode VR) student's block event
+stream into things an agent can act on: the current workspace, behavioral triggers, and
+(later) a goal/strategy layer. No database, no web framework. Each package takes plain
+data in and hands plain data back, so any host (reflecks, the agent server, a notebook)
+can drive them.
 
 Each folder is an independent, `pip`-installable package with its own README.
 
@@ -12,7 +12,7 @@ Each folder is an independent, `pip`-installable package with its own README.
 
 | Folder | What it does | Deps | Status |
 |---|---|---|---|
-| [`LogParserDeltaEngine/`](LogParserDeltaEngine/) | Replay a log stream (or one project XML) into the current Blockly workspace and render it as LLM-ready pseudo-code. | stdlib | populated |
+| [`LogParserDeltaEngine/`](LogParserDeltaEngine/) | Replay a log stream (or one project XML) into the current Blockly workspace and render it as compact pseudo-code. | stdlib | populated |
 | [`LearnerModels/`](LearnerModels/) | Per-run edit distances (APTED), the 5 behavioral triggers, and session episodes. | `apted` | populated |
 | [`GoalStrategy/`](GoalStrategy/) | The pedagogy layer (goal + feedback strategy). | none yet | empty placeholder |
 
@@ -33,27 +33,42 @@ flowchart LR
     G --> I["GoalStrategy (future)<br/>pick feedback / goal"]
 ```
 
+## Two workspace renderers
+
+Both packages can render a VEX Blockly workspace as pseudo-code, for two audiences. The
+names follow one pattern — `generate_<style>_<form>` — so which one you want is readable
+off the call.
+
+| Renderer | Package | Audience | What it does |
+|---|---|---|---|
+| `generate_compact_prompt` (on `SmartDeltaEngine`) / `generate_compact_prompt_from_project` | `LogParserDeltaEngine` | LLM | Token-cheap listing split into `[Active]` (reachable from a hat block) and `[Orphaned]`. Strips noisy `pg_`/`aim_`/`mixed_` prefixes. No name lookup. |
+| `generate_readable_text` / `generate_readable_lines` | `LearnerModels` | Human | Full display names from `vex_blocks.json`, infix operators (`A < B`), tidied enums (`fwd` → `forward`), inline reporter values, `else:` branch labels. No active/orphan split. |
+
+Use **compact** when building an LLM prompt (spend tokens on structure, not prose). Use
+**readable** when showing the code to a person.
+
 ## Data contract (what you feed in)
 
-Both live packages read the parsed VEX log content, the same shape it already gets
-stored in. One event shape drives the whole `LearnerModels` pipeline:
+Both live packages read the same parsed VEX log event — a dict with three keys:
 
 ```python
-{"event_type": "runProject",       # str,  the VEX eventType
- "content": {...parsed VEX log...}, # dict, carries project.workspace + playground
- "ts": 1690000000.0}               # float epoch seconds (or None)
+{"event_type": "runProject",        # str,   the VEX eventType
+ "content": {...parsed VEX log...}, # dict,  carries project.workspace + playground
+ "ts": 1690000000.0}                # float, epoch seconds (or None)
 ```
 
-- `LearnerModels.compute_run_edit_distances(events)` reads `runProject` events and their
-  `content`. Returns `{"runs": [{"index", "edit_distance", "ts", "playground"}]}`.
-- `LearnerModels.segment_session(events)` reads only `event_type` + `ts`. Returns a
-  `(episodes, pauses)` tuple.
-- `LogParserDeltaEngine.generate_llm_prompt_from_project(project_json_str)` takes the
-  `project` field of a single VEX log. Returns the pseudo-code prompt, or `None`.
+Each function reads only what it needs:
+
+| Function | Reads | Returns |
+|---|---|---|
+| `compute_run_edit_distances(events)` | `runProject` events; their `content` (`project.workspace`, `playground`) and `ts` | `{"runs": [{"index", "edit_distance", "ts", "playground"}]}` |
+| `detect_run_triggers_by_playground(runs)` | the `runs` list above | `[(trigger_type, run_index, detail)]` |
+| `segment_session(events)` | every event's `event_type` + `ts` (ignores `content`) | `(episodes, pauses)` |
+| `generate_compact_prompt_from_project(project_json_str)` | one `project` field (JSON string) | pseudo-code `str`, or `None` if empty |
 
 The host supplies these (an adapter from wherever you keep events). Nothing in here
-touches a DB. The one stateful trigger, `inactive`, leaves its two DB touch-points to
-the caller, see [`LearnerModels/README.md`](LearnerModels/README.md).
+touches a DB. The one stateful trigger, `inactive`, leaves its two DB touch-points to the
+caller — see [`LearnerModels/README.md`](LearnerModels/README.md).
 
 There's a runnable walkthrough in [`examples/end_to_end.py`](examples/end_to_end.py)
 that feeds one event stream through both packages.

@@ -8,7 +8,7 @@ Run it (needs `apted`, which LearnerModels requires):
 
 It builds a small synthetic session and shows, in order:
   1. LogParserDeltaEngine, the current workspace as an LLM-ready prompt
-  2. LearnerModels.humanize_text, the workspace as readable pseudo-code
+  2. LearnerModels.generate_readable_text, the workspace as readable pseudo-code
   3. LearnerModels.compute_run_edit_distances, per-run code-change magnitude
   4. LearnerModels.detect_run_triggers_by_playground, the 4 momentary triggers
   5. LearnerModels.segment_session, the session split into episodes + pauses
@@ -22,10 +22,10 @@ from datetime import datetime, timedelta, timezone
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from LogParserDeltaEngine import generate_llm_prompt_from_project
+from LogParserDeltaEngine import generate_compact_prompt_from_project
 from LearnerModels import (
     compute_run_edit_distances, detect_run_triggers_by_playground,
-    segment_session, humanize_text, detect_inactive_trigger,
+    segment_session, generate_readable_text, detect_inactive_trigger,
 )
 
 # A tiny "program": a hat block driving forward. This is the Blockly workspace XML
@@ -65,11 +65,11 @@ def main():
     # 1. Current workspace as an LLM prompt (from the latest run's project field).
     latest_project = json.dumps(events[-1]["content"]["project"])
     print(BAR); print("1. LogParserDeltaEngine, current workspace prompt"); print(BAR)
-    print(generate_llm_prompt_from_project(latest_project))
+    print(generate_compact_prompt_from_project(latest_project))
 
     # 2. Same workspace, humanized to pseudo-code.
-    print("\n" + BAR); print("2. humanize_text, readable pseudo-code"); print(BAR)
-    print(humanize_text(WORKSPACE))
+    print("\n" + BAR); print("2. generate_readable_text, readable pseudo-code"); print(BAR)
+    print(generate_readable_text(WORKSPACE))
 
     # 3. Per-run edit distances. Identical reruns -> 0; first run has no predecessor.
     print("\n" + BAR); print("3. compute_run_edit_distances, magnitude per run"); print(BAR)

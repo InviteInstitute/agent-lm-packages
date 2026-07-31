@@ -4,7 +4,7 @@ and the decoupled `inactive` seam."""
 import json
 from datetime import datetime, timedelta, timezone
 
-from LogParserDeltaEngine import generate_llm_prompt_from_project
+from LogParserDeltaEngine import generate_compact_prompt_from_project
 from LearnerModels import detect_run_triggers, detect_inactive_trigger, INACTIVE_RUN_INDEX
 
 
@@ -17,11 +17,11 @@ def test_delta_engine_bootstraps_from_xml():
         '  <block type="pg_turn" id="loose" x="200" y="200"/>'
         '</xml>'
     )
-    prompt = generate_llm_prompt_from_project(json.dumps({"workspace": xml}))
+    prompt = generate_compact_prompt_from_project(json.dumps({"workspace": xml}))
     assert prompt is not None
     assert "whenStarted" in prompt and "drive" in prompt
     assert "[Active]" in prompt and "[Orphaned]" in prompt
-    assert generate_llm_prompt_from_project(None) is None
+    assert generate_compact_prompt_from_project(None) is None
 
 
 def test_momentary_triggers_fire():

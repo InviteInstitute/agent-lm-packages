@@ -139,7 +139,7 @@ def _strip_ns(elem):
         _strip_ns(child)
 
 
-def humanize_workspace(xml_string):
+def generate_readable_lines(xml_string):
     """Parse a workspace XML string into a list of readable lines, one per stackable
     block, indented to show the loop and if nesting. Empty or broken input gives back
     [] instead of raising, so a caller can always treat this as best-effort."""
@@ -172,10 +172,10 @@ def humanize_workspace(xml_string):
     return out
 
 
-def humanize_text(xml_string):
-    """Same thing as humanize_workspace but joined into one string. Gives back "" when
+def generate_readable_text(xml_string):
+    """Same thing as generate_readable_lines but joined into one string. Gives back "" when
     there's nothing to show."""
-    return "\n".join(humanize_workspace(xml_string))
+    return "\n".join(generate_readable_lines(xml_string))
 
 
 if __name__ == "__main__":
@@ -202,7 +202,7 @@ if __name__ == "__main__":
         '    </block></next></block>'
         '</next></block></xml>'
     )
-    lines = humanize_workspace(demo)
+    lines = generate_readable_lines(demo)
     print("\n".join(lines))
     assert any("200" in ln for ln in lines), "value-slot number was dropped"
     assert any("else:" == ln.strip() for ln in lines), "if/else branch not labeled"
