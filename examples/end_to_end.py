@@ -30,7 +30,7 @@ from LearnerModels import (
     segment_session, detect_inactive_trigger,
 )
 
-# A tiny "program": a hat block driving forward. This is the Blockly workspace XML
+# A tiny "program": a hat block driving forward. This is the VEX workspace XML
 # that a VEX log carries inside content.project.workspace.
 WORKSPACE = (
     '<xml>'

@@ -126,8 +126,8 @@ resurface periodically.
 | module | public | notes |
 |---|---|---|
 | `run_sequence.py` | `compute_run_edit_distances` | runProject to workspace XML to AST to per-run distance |
-| `distance.py` | `cached_edit_distance`, `compute_edit_distance` | APTED tree-edit distance, Blockly cost model, XML-pair memo |
-| `ast_builder.py` | `xml_to_block_ast`, `extract_workspace_xml` | Blockly XML into an AST dict |
+| `distance.py` | `cached_edit_distance`, `compute_edit_distance` | APTED tree-edit distance, VEX cost model, XML-pair memo |
+| `ast_builder.py` | `xml_to_block_ast`, `extract_workspace_xml` | VEX XML into an AST dict |
 | `triggers.py` | `detect_run_triggers[_by_playground]`, `is_inactive`, `detect_inactive_trigger` | all 5 triggers (4 momentary + the inactive DB seam above) |
 | `episodes.py` | `segment_session`, `segment_episodes` | session into episodes + pauses |
 | `constants.py` | thresholds + APTED costs | one place for all the tunable numbers |

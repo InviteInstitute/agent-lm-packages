@@ -1,5 +1,5 @@
 """
-Parses a Blockly workspace XML into an AST-ish dict that the distance code can work
+Parses a VEX workspace XML into an AST-ish dict that the distance code can work
 with.
 
 The shape it spits out ({nodes, edges, roots}) is deliberately the same one the

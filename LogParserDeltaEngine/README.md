@@ -1,6 +1,6 @@
 # LogParserDeltaEngine
 
-Rebuild a VEX Blockly **workspace** from a student's activity and render it as
+Rebuild a VEX **workspace** from a student's activity and render it as
 pseudo-code. It's both the log parser (folds log events into state) and the delta engine
 (replays the create/move/delete/change deltas). Two renderers live here, compact (LLM)
 and readable (human).

@@ -12,7 +12,7 @@ Each folder is an independent, `pip`-installable package with its own README.
 
 | Folder | What it does | Deps | Status |
 |---|---|---|---|
-| [`LogParserDeltaEngine/`](LogParserDeltaEngine/) | Replay a log stream (or one project XML) into the current Blockly workspace and render it as pseudo-code (compact + readable). | stdlib | populated |
+| [`LogParserDeltaEngine/`](LogParserDeltaEngine/) | Replay a log stream (or one project XML) into the current VEX workspace and render it as pseudo-code (compact + readable). | stdlib | populated |
 | [`LearnerModels/`](LearnerModels/) | Per-run edit distances (APTED), the 5 behavioral triggers, and session episodes. | `apted` | populated |
 | [`GoalStrategy/`](GoalStrategy/) | The pedagogy layer (goal + feedback strategy). | none yet | empty placeholder |
 
@@ -35,7 +35,7 @@ flowchart LR
 
 ## Two workspace renderers
 
-Both renderers live in `LogParserDeltaEngine`. They render the same VEX Blockly workspace
+Both renderers live in `LogParserDeltaEngine`. They render the same VEX workspace
 as pseudo-code, for two audiences. The names follow one pattern, `generate_<style>_<form>`,
 so which one you want is readable off the call.
 
@@ -72,6 +72,24 @@ caller. See [`LearnerModels/README.md`](LearnerModels/README.md).
 
 There's a runnable walkthrough in [`examples/end_to_end.py`](examples/end_to_end.py)
 that feeds one event stream through both packages.
+
+## What's new
+
+Recent changes to the package layout and naming:
+
+- **Readable renderer moved.** `humanize.py` and `vex_blocks.json` moved from
+  `LearnerModels` into `LogParserDeltaEngine`, so both workspace renderers (compact +
+  readable) live in one place. `LearnerModels` is now purely behavioral signals.
+- **Renderer renames.** Both renderers follow one pattern, `generate_<style>_<form>`:
+  - `generate_llm_prompt` -> `generate_compact_prompt` / `generate_compact_prompt_from_project`
+  - `humanize_text` -> `generate_readable_text`
+  - `humanize_workspace` -> `generate_readable_lines`
+- **`BlocklyConfig` renamed to `VexConfig`.** Internal class in `LearnerModels/distance.py`.
+- **"Blockly" dropped everywhere.** The docs and code say "VEX" throughout.
+- **No em dashes or semicolons** in any prose (docs or code comments).
+
+If you imported `humanize_text` from `LearnerModels`, switch to
+`from LogParserDeltaEngine import generate_readable_text`.
 
 ## Install / test
 

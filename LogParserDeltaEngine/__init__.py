@@ -1,5 +1,5 @@
 """
-LogParserDeltaEngine: take a student's VEX log stream and rebuild what their Blockly
+LogParserDeltaEngine: take a student's VEX log stream and rebuild what their VEX
 workspace looks like right now, then render it as pseudo-code. Two renderers live here:
 
   generate_compact_prompt[_from_project]   compact, token-cheap, [Active]/[Orphaned] split (LLM)

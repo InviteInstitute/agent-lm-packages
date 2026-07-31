@@ -1,5 +1,5 @@
 """
-Turns a VEX Blockly workspace into a readable program listing.
+Turns a VEX workspace into a readable program listing.
 
 This is display only. It parses the XML by itself and never touches ast_builder.py or
 the edit-distance path, so nothing in here can accidentally move a trigger signal. The
@@ -113,7 +113,7 @@ def _expr(block):
 
 def _line(block):
     """The one-line label for a stackable block: name, then fields, then value
-    literals. I hide the mutator fields, since those are just Blockly plumbing
+    literals. I hide the mutator fields, since those are just VEX plumbing
     (things like `anddontwait_mutator`) and mean nothing to a reader."""
     fields = [_tidy(_field(block, c.attrib["name"]))
               for c in block

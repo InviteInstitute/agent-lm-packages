@@ -2,8 +2,8 @@
 Takes two block ASTs and gives me back a single number: how much the code changed
 between them, as a tree-edit distance.
 
-I turn each AST into an APTED tree and run it through a Blockly-specific cost model
-(see BlocklyConfig below). The result is a whole number. 0 means the two runs are
+I turn each AST into an APTED tree and run it through a VEX-specific cost model
+(see VexConfig below). The result is a whole number. 0 means the two runs are
 identical, and the bigger it gets the more the student rewrote. Every trigger except
 inactive is defined straight off this number, so it's the load-bearing piece.
 """
@@ -124,8 +124,8 @@ def ast_to_apted_tree(ast_dict, include_fields=True, field_keys=None, include_ed
     return super_root
 
 
-class BlocklyConfig(Config):
-    """The cost model that makes the distance mean something for Blockly. Inserting
+class VexConfig(Config):
+    """The cost model that makes the distance mean something for VEX. Inserting
     or deleting a real block costs 1.0. The synthetic edge nodes cost 0 to add or
     remove, so adding a single block scores 1 and not 2 (the block plus its
     connector). Renames: free when the labels match, field_change_cost when only a
@@ -153,4 +153,4 @@ def compute_edit_distance(ast_prev, ast_curr):
     under the edge-aware cost model. 0 means the two are identical."""
     t1 = ast_to_apted_tree(ast_prev)
     t2 = ast_to_apted_tree(ast_curr)
-    return int(round(APTED(t1, t2, BlocklyConfig()).compute_edit_distance()))
+    return int(round(APTED(t1, t2, VexConfig()).compute_edit_distance()))
