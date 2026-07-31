@@ -18,14 +18,19 @@ Each folder is an independent, `pip`-installable package with its own README.
 
 ## How they fit together
 
-```
- VEX event stream (runProject, blockMoved, loadProject, ...)
-        |
-        |-- LogParserDeltaEngine --> current workspace --> LLM prompt   ("what is the code now?")
-        |
-        |-- LearnerModels --> edit distance per run --> triggers (5) --> episodes  ("what is the student doing?")
-                                                            |
-                                                            +--> GoalStrategy (future): pick feedback/goal
+```mermaid
+flowchart LR
+    A["VEX event stream<br/>runProject, blockMoved, loadProject, ..."] --> B[LogParserDeltaEngine]
+    A --> C[LearnerModels]
+
+    B --> D[current workspace]
+    D --> E["LLM prompt<br/><i>what is the code now?</i>"]
+
+    C --> F[edit distance per run]
+    F --> G["triggers (5)"]
+    G --> H["episodes<br/><i>what is the student doing?</i>"]
+
+    G --> I["GoalStrategy (future)<br/>pick feedback / goal"]
 ```
 
 ## Data contract (what you feed in)
