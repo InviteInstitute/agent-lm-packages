@@ -3,7 +3,7 @@ Parses a VEX workspace XML into an AST-ish dict that the distance code can work
 with.
 
 The shape it spits out ({nodes, edges, roots}) is deliberately the same one the
-training pipeline used, so the APTED distance I compute here lines up with the
+training pipeline used, so the APTED distance computed here lines up with the
 numbers the model was trained on. Don't change the shape without checking that.
 """
 import json
@@ -54,9 +54,9 @@ def _find_child_blocks(container_elem, allow_shadow=False):
 def xml_to_block_ast(xml_string, keep_shadow=False):
     """Parse workspace XML into {nodes, edges, roots}. nodes maps a block id to its
     type and fields, edges record the parent/child links (tagged by connection kind,
-    value/statement/next, plus the slot), and roots lists the top-level blocks. I
-    drop shadow blocks unless keep_shadow is set, and blank input just gives back an
-    empty AST instead of raising."""
+    value/statement/next, plus the slot), and roots lists the top-level blocks. Shadow
+    blocks are dropped unless keep_shadow is set, and blank input returns an empty
+    AST instead of raising."""
     if not xml_string:
         return {"nodes": {}, "edges": [], "roots": []}
 
@@ -102,9 +102,9 @@ def xml_to_block_ast(xml_string, keep_shadow=False):
 
 
 def extract_workspace_xml(log_content):
-    """Dig the workspace XML out of a parsed log content dict. The `project` field
-    shows up sometimes as a nested dict and sometimes as a JSON string, so I handle
-    both. Returns "" when there's nothing usable in there."""
+    """Extract the workspace XML from a parsed log content dict. The `project` field
+    shows up sometimes as a nested dict and sometimes as a JSON string, so both are
+    handled. Returns "" when there's nothing usable in there."""
     project = log_content.get("project", {}) if isinstance(log_content, dict) else {}
     if isinstance(project, str):
         try:

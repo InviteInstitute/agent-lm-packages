@@ -96,25 +96,25 @@ own `iterative` threshold. Returned `run_index` values stay global.
 
 `inactive` is stateful (it fires, re-alerts, then resolves over time), so it can't be
 fully pure like the others. This package keeps the *decision* pure and leaves the two
-storage touch-points to you:
+storage touch-points to the caller:
 
 ```python
 from LearnerModels import detect_inactive_trigger
 
 fire = detect_inactive_trigger(
-    last_event_ts,            # you read: when the session's most recent event happened
+    last_event_ts,            # read from session events: most recent event timestamp
     now=None,                 # defaults to utcnow
-    last_inactive_fire=None,  # you read: (run_index, fired_at) of the last inactive fire, or None
+    last_inactive_fire=None,  # read from stored triggers: (run_index, fired_at) of last inactive fire, or None
 )
 if fire:
-    ...        # you persist it (dedupe on run_index)
+    ...        # persist it (dedupe on run_index)
 else:
-    ...        # if the student is active again, you close out any open inactive row
+    ...        # if the student is active again, close out any open inactive row
 ```
 
-You provide exactly two things: a **read** (the last event time and the last inactive
-fire) and a **write** (persist the fire, or resolve the open row on recovery). No table
-shape is forced on you.
+The caller provides exactly two things: a **read** (the last event time and the last
+inactive fire) and a **write** (persist the fire, or resolve the open row on recovery).
+No table shape is forced on the caller.
 
 The first fire uses `run_index = INACTIVE_RUN_INDEX` (-1), and each re-alert steps it down
 (-2, -3, ...) after `RE_ALERT_SECONDS` (600s), so a `UNIQUE(student, session, type,

@@ -1,9 +1,9 @@
 # LogParserDeltaEngine
 
-Rebuild a VEX **workspace** from a student's activity and render it as
-pseudo-code. It's both the log parser (folds log events into state) and the delta engine
-(replays the create/move/delete/change deltas). Two renderers live here, compact (LLM)
-and readable (human).
+Rebuild a VEX **workspace** from a student's activity and render it as pseudo-code. It's
+both the log parser (folds log events into state) and the delta engine (replays the
+create/move/delete/change deltas). Two renderers live here: compact (LLM) and readable
+(human).
 
 Stdlib only (`json`, `xml.etree`), nothing to install.
 
@@ -16,12 +16,12 @@ from LogParserDeltaEngine import (
 )
 ```
 
-**1. Compact prompt from a project blob** (LLM). The common case: you've got a student's
-latest `project` field off a VEX log.
+**1. Compact prompt from a project blob** (LLM). The common case: a student's latest
+`project` field off a VEX log.
 
 ```python
 prompt = generate_compact_prompt_from_project(project_json_str)
-# "[Active]\n whenStarted\n  drive(DIRECTION=fwd,UNITS=mm)\n[Orphaned]\n turn(...)"
+# "[Active]\n whenStarted\n  drive_for(DIRECTION=fwd,UNITS=mm,AMOUNT=200)\n[Orphaned]\n (empty)"
 # or None if the project has no blocks
 ```
 
@@ -33,7 +33,7 @@ engine = SmartDeltaEngine()
 for log_event in events:              # each: {"content": <json str or dict>, ...}
     engine.process_log(log_event)
 engine.get_runnable_block_count()     # int: blocks reachable from a hat block
-engine.get_total_blocks()             # int: all blocks tracked
+engine.get_total_blocks()             # int: all non-shadow blocks tracked
 engine.generate_compact_prompt()      # str: same [Active]/[Orphaned] pseudo-code
 ```
 
@@ -51,23 +51,30 @@ generate_readable_lines(xml_string)   # list[str], same content as a list
 |---|---|---|
 | `generate_compact_prompt_from_project(project_json_str)` | `project` field as a JSON string (or `None`) | pseudo-code `str`, or `None` if empty/unparseable |
 | `SmartDeltaEngine().process_log(log_event)` | dict with a `content` key (JSON str or dict) | `None` (mutates engine state) |
-| `SmartDeltaEngine().get_runnable_block_count()` | none | `int` (blocks reachable from a hat) |
-| `SmartDeltaEngine().get_total_blocks()` | none | `int` (all tracked blocks) |
+| `SmartDeltaEngine().get_runnable_block_count()` | none | `int` (non-shadow blocks reachable from a hat) |
+| `SmartDeltaEngine().get_total_blocks()` | none | `int` (all non-shadow blocks tracked) |
 | `SmartDeltaEngine().generate_compact_prompt()` | none | `str` (the compact pseudo-code listing) |
 | `generate_readable_text(xml_string)` | workspace XML `str` | readable pseudo-code `str` (empty string if blank/broken) |
 | `generate_readable_lines(xml_string)` | workspace XML `str` | `list[str]`, one line per stackable block (empty list if blank/broken) |
 
 ## Compact output format
 
-The compact prompt has two sections:
+The compact prompt has two sections, `[Active]` and `[Orphaned]`:
 
 ```
 [Active]
- <block_type>(<field>=<val>,...)
-  <child_block_type>(<field>=<val>,...)
-  <reporter_type>(<field>=<val>,...)
+ events_when_started
+  drivetrain_drive_for (DIRECTION=fwd,UNITS=mm,AMOUNT=200)
+  drivetrain_turn_for (DIRECTION=right,UNITS=deg,AMOUNT=90)
+  control_wait (UNITS=seconds,DURATION=1)
+  control_repeat (TIMES=3)
+   drivetrain_drive_for (DIRECTION=rev,UNITS=mm,AMOUNT=50)
+  control_if_then
+   operator_comparison (COMPARISON=<,NUM2=100)
+    sensing_distance_distance (DISTANCE=frontdistance)
+   drivetrain_stop_driving
 [Orphaned]
- <block_type>(...)
+ (empty)
 ```
 
 - **[Active]** is blocks reachable from a "hat" block (`events_*`,
@@ -75,10 +82,12 @@ The compact prompt has two sections:
   not wired to a hat. Either section shows ` (empty)` when it has nothing.
 - Each block prints its type (noisy VEX prefixes `pg_`/`aim_`/`mixed_` stripped to save
   tokens) and its `field=value` pairs, indented by nesting depth.
-- Value-slot literals (drive distance, turn degrees, wait duration) are folded into the
-  parent block's fields, e.g. `(DIRECTION=fwd,UNITS=mm,AMOUNT=200)`.
+- Value-slot literals (drive distance, turn degrees, wait duration) fold into the parent
+  block's fields, e.g. `AMOUNT=200` on a `drive_for` block.
 - Reporter blocks inside value slots (conditions, sensor reads) render as indented
   children, same as loop bodies and next-chain blocks.
+- Shadow blocks (inline number pickers) are tracked internally for field propagation but
+  excluded from the prompt and from block counts.
 
 ## Readable output format
 
@@ -93,10 +102,14 @@ never breaks the listing.
 | `eventType` | Effect |
 |---|---|
 | `loadProject`, `newProject` | Wipe state and rebuild from the project's workspace XML |
-| `blockEventData` with `create` | Add a block (shadows skipped) |
-| `blockEventData` with `move` | Reparent a block, or set its x/y if it's floating |
+| `blockEventData` with `create` | Add a block (shadows tracked, initial fields captured) |
+| `blockEventData` with `move` | Reparent a block (with edge type + slot), or set its x/y if floating |
 | `blockEventData` with `delete` | Remove a block and its descendants |
-| `blockEventData` with `change` | Update one field value on a block |
+| `blockEventData` with `change` | Update one field value on a block (propagates to parent if shadow) |
+
+Orphan status is recomputed from scratch after every create/move/delete by walking down
+from hat roots, so the active/orphan split stays correct without incremental cascade
+logic.
 
 Anything it can't parse is dropped quietly (no exceptions).
 
@@ -106,3 +119,26 @@ Anything it can't parse is dropped quietly (no exceptions).
 or a dict) that carries `eventType` and either `blockEventData` (for deltas) or `project`
 (for load/new). `generate_compact_prompt_from_project` takes the `project` field straight,
 as a JSON string. The readable renderers take a workspace XML string directly.
+
+### `create` event payload
+
+The `blockEventData` for a `create` event may carry initial field values:
+
+```python
+{"eventType": "create", "blockID": "b1", "blockType": "pg_drivetrain_drive_for",
+ "fields": [{"name": "DIRECTION", "value": "fwd"}, {"name": "UNITS", "value": "mm"}]}
+```
+
+### `move` event payload
+
+A `move` event reparents a block. The `newInfo` dict carries the parent, edge type, and
+slot name:
+
+```python
+{"eventType": "move", "blockID": "s1",
+ "newInfo": {"parent": "b1", "type": "value", "inputName": "AMOUNT"}}
+```
+
+`type` is `next` (sequential chain), `statement` (loop/if body), or `value` (inline
+reporter slot). When a shadow block moves into a `value` slot, its field value folds into
+the parent's fields under the slot name.

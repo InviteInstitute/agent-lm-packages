@@ -1,6 +1,6 @@
 """
 LearnerModels: take a student's VEX event stream and turn it into behavioral signals
-I can act on. Everything in here is pure, no DB and no framework.
+to act on. Everything in here is pure, no DB and no framework.
 
 The main path:
 
@@ -12,7 +12,7 @@ And the 5th trigger, which is time-based instead of edit-based:
 
   inactive           -> detect_inactive_trigger      -> idle fire, DB left to the caller
 
-What you can import:
+Public API:
   compute_run_edit_distances      (run_sequence)
   detect_run_triggers, detect_run_triggers_by_playground   (triggers)
   is_inactive, detect_inactive_trigger, INACTIVE_RUN_INDEX  (triggers)

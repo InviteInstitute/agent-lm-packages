@@ -1,16 +1,14 @@
 """
-Rebuilds a student's VEX block workspace so I can see what their code actually looks
-like right now.
+Rebuilds a student's VEX block workspace to see what their code currently looks like.
 
 There are two ways in: replay the create/move/delete/change events one at a time as
 they stream in, or bootstrap straight from a project's saved workspace XML. Either
 path lands in the same place, three flat maps: every block, who's parented to whom,
 and which blocks are "orphans" (not wired up under a hat block, so they'll never run).
-generate_compact_prompt turns that into a short pseudo-code listing that's cheap to hand
-to an LLM.
+generate_compact_prompt turns that into a short pseudo-code listing suitable for an
+LLM prompt.
 
-Stdlib only (json + xml.etree) on purpose. I didn't want to pull in a dependency just
-to read some XML.
+Stdlib only (json + xml.etree) by design, no external dependencies.
 """
 import json
 import xml.etree.ElementTree as ET
@@ -44,10 +42,10 @@ class SmartDeltaEngine:
         )
 
     def process_log(self, log_event):
-        """Take one VEX log event and fold it into the workspace I'm tracking. A
+        """Take one VEX log event and fold it into the tracked workspace. A
         loadProject/newProject wipes everything and rebuilds from the project XML,
-        and the block-level create/move/delete/change events just nudge the maps. If an
-        event is junk or irrelevant I drop it quietly rather than blow up."""
+        and block-level create/move/delete/change events mutate the maps. Unparseable
+        or irrelevant events are dropped quietly."""
         try:
             content = json.loads(log_event.get('content', '{}'))
         except Exception:
@@ -60,7 +58,7 @@ class SmartDeltaEngine:
             self._bootstrap_from_xml(content)
             return
 
-        # Anything else is a single block-level change I apply on top of what I have.
+        # Anything else is a single block-level change applied on top of current state.
         raw_block_data = content.get('blockEventData')
         if not raw_block_data:
             return
@@ -98,7 +96,7 @@ class SmartDeltaEngine:
                 slot = new_info.get('inputName') or new_info.get('slot')
                 self._link(new_parent, block_id, edge_type, slot)
 
-                # It's attached to a parent now, so its floating x/y don't mean anything.
+                # Attached to a parent now, so floating x/y no longer apply.
                 if block_id in self.blocks:
                     self.blocks[block_id]['x'] = None
                     self.blocks[block_id]['y'] = None
@@ -134,9 +132,9 @@ class SmartDeltaEngine:
             new_value = block_data.get('newValue')
             if block_id in self.blocks and field_name:
                 self.blocks[block_id]['fields'][field_name] = new_value
-                # If this is a shadow block parented into a value slot, propagate
-                # the change to the parent's folded field so the compact prompt
-                # stays in sync.
+                # If a shadow block parented into a value slot changes, propagate
+                # the change to the parent's folded field to keep the compact
+                # prompt in sync.
                 if self.blocks[block_id].get('is_shadow'):
                     for p_id, entries in self.parent_map.items():
                         for entry in entries:
@@ -159,13 +157,13 @@ class SmartDeltaEngine:
             del self.parent_map[k]
 
     def _bootstrap_from_xml(self, content):
-        """Dump whatever I have and rebuild the maps by walking the project's
-        workspace XML from scratch. A block at the root is only live if it's a hat,
-        and as I walk down, every child just inherits whatever its parent's orphan
-        status was. Shadow blocks inside <value> slots contribute their field values
-        to the parent block's fields (e.g. the NUM on a math_number shadow becomes
-        AMOUNT on the drive block that holds it), and real reporter blocks in value
-        slots get tracked as children with edge_type='value'."""
+        """Clear state and rebuild the maps by walking the project's workspace XML
+        from scratch. A block at the root is only live if it's a hat, and every
+        child inherits its parent's orphan status. Shadow blocks inside <value>
+        slots contribute their field values to the parent block's fields (e.g. the
+        NUM on a math_number shadow becomes AMOUNT on the drive block that holds
+        it), and real reporter blocks in value slots get tracked as children with
+        edge_type='value'."""
         self.blocks.clear()
         self.parent_map.clear()
         self.orphan_status.clear()
@@ -316,13 +314,12 @@ class SmartDeltaEngine:
         return sum(1 for b in self.blocks if not self.blocks[b].get('is_shadow'))
 
     def generate_compact_prompt(self):
-        """Render the workspace as compact pseudo-code the LLM can read. I split the
-        root blocks into two sections, [Active] (reachable from a hat block) and
-        [Orphaned], and print each block with its fields, indented by how deep it
-        sits. Value-slot children (inline reporters like conditions and sensor reads)
-        render indented under their parent. Next/statement children chain at the same
-        or deeper indentation. I strip the common VEX type prefixes to keep the token
-        count down."""
+        """Render the workspace as compact pseudo-code for an LLM. Root blocks are
+        split into two sections, [Active] (reachable from a hat block) and
+        [Orphaned], with each block printing its type and fields, indented by
+        nesting depth. Value-slot children (inline reporters like conditions and
+        sensor reads) render indented under their parent. Common VEX type prefixes
+        are stripped to keep the token count down."""
         all_children = set()
         for entries in self.parent_map.values():
             all_children.update(e['child_id'] for e in entries)
@@ -388,16 +385,16 @@ class SmartDeltaEngine:
 
 
 def generate_compact_prompt_from_project(project_json_str):
-    """Shortcut for when I just have a project blob (the `project` field off a VEX
-    log) and want the prompt in one call. Spins up a fresh engine, bootstraps it,
-    and hands back the rendered prompt. Gives None if there's no input or the
-    project turned out to have no blocks."""
+    """Shortcut for when only a project blob (the `project` field off a VEX log) is
+    available and the prompt is needed in one call. Creates a fresh engine,
+    bootstraps it, and returns the rendered prompt. Returns None if there's no
+    input or the project has no blocks."""
     if project_json_str is None:
         return None
 
     engine = SmartDeltaEngine()
 
-    # Fake up a loadProject event so I can reuse _bootstrap_from_xml as-is.
+    # Fake up a loadProject event to reuse _bootstrap_from_xml as-is.
     engine._bootstrap_from_xml({
         'eventType': 'loadProject',
         'project': project_json_str

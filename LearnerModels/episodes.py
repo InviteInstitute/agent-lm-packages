@@ -1,7 +1,7 @@
 """
 Chops a session into CODE / RUN / RESET episodes.
 
-I walk the events in time order and group them into episodes, stopping whenever there's
+Events are walked in time order and grouped into episodes, stopping whenever there's
 a hard-pause boundary, and folding the "soft" UI events into whatever episode is around
 them so they don't clutter the timeline.
 
@@ -54,14 +54,14 @@ def segment_episodes(events: list[dict], hard_pause_after_idx: set[int]) -> list
         et = events[i].get('event_type', '')
 
         if et in SOFT_EVENT_TYPES:
-            # A soft event with no episode open yet. Nothing to fold it into, so I
-            # just skip it (absorption only happens inside an episode, below).
+            # A soft event with no episode open yet. Nothing to fold it into, so
+            # skip it (absorption only happens inside an episode, below).
             i += 1
             continue
 
         kind = _classify_event(et)
         if not kind:
-            # Event type I don't care about here, skip it.
+            # Event type not relevant here, skip it.
             i += 1
             continue
 
@@ -148,7 +148,7 @@ def _detect_inactive_pauses(events: list[dict]) -> list[dict]:
 
 def _detect_post_run_pauses(events: list[dict], episodes: list[dict]) -> list[dict]:
     """Pass 3: catch the "watched it run, then sat there" gap. For each RUN that closed
-    cleanly with projectEnd, I skip past the transparent UI events and, if the next real
+    cleanly with projectEnd, skip past the transparent UI events and, if the next real
     event lands in the (SHORT_PAUSE_MIN_S, PAUSE_THRESHOLD_S) window, mark a
     POST_RUN_PAUSE."""
     pauses = []

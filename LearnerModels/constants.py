@@ -4,7 +4,7 @@ that reads the same student data, keep both copies matching or the triggers won'
 up between them."""
 
 # --- APTED edit costs ---
-# The edge nodes are synthetic connectors, so I make them free to add or remove. That
+# The edge nodes are synthetic connectors, so they are free to add or remove. That
 # way adding one real block scores 1 and not 2 (the block plus its connector).
 BLOCK_DELETE_COST = 1.0
 BLOCK_INSERT_COST = 1.0
@@ -61,8 +61,8 @@ SOFT_EVENT_TYPES = frozenset({
     "playgroundData",                                                         # performance_data
 })
 
-# When I look for the "next real event after a RUN" during POST_RUN_PAUSE detection,
-# these are the soft events I skip over. Note the menu/nav events are NOT in here on
+# When looking for the "next real event after a RUN" during POST_RUN_PAUSE detection,
+# these are the soft events to skip over. Note the menu/nav events are NOT in here on
 # purpose: a student poking a menu counts as doing something, so it ends the pause.
 POST_RUN_PAUSE_TRANSPARENT_TYPES = frozenset({
     "playgroundOpen", "playgroundClosed", "playgroundHidden",                 # playground_ui

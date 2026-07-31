@@ -5,18 +5,18 @@ This is display only. It parses the XML by itself and never touches ast_builder.
 the edit-distance path, so nothing in here can accidentally move a trigger signal. The
 reason it exists: the alert views show block types but not their parameters, and the
 parameters are often the whole point (how far a student actually drives, say). Those
-numbers sit in `<value>` shadow slots that the distance parser throws away, so I keep
-them here instead.
+numbers sit in `<value>` shadow slots that the distance parser throws away, so they
+are preserved here instead.
 
-The rendering rule is really just one idea, applied recursively:
+The rendering rule is one idea, applied recursively:
   * statement / next children go on their own stacked, indented lines (loop and if
     bodies)
   * value children get rendered inline into the parent (conditions, sensor reads,
     math), because a reporter drops into a socket, it doesn't sit in the stack
 
 Block names come from vex_blocks.json (VEX's own mapping, with blocks + robots + python
-merged). If a block isn't in there I just print its raw type, so a stale mapping never
-breaks the listing, it only makes it uglier until someone refreshes the file.
+merged). If a block isn't in there its raw type prints, so a stale mapping never breaks
+the listing, it only makes it uglier until someone refreshes the file.
 """
 import json
 import os
@@ -24,8 +24,9 @@ import xml.etree.ElementTree as ET
 
 _MAP_PATH = os.path.join(os.path.dirname(__file__), "vex_blocks.json")
 
-# Block type to display name, loaded once at import. I merge the mapping's sections
-# and let blocks win over robots over python when a type shows up in more than one.
+# Block type to display name, loaded once at import. The mapping's sections are
+# merged with blocks winning over robots over python when a type appears in more
+# than one.
 _NAMES = {}
 try:
     _raw = json.load(open(_MAP_PATH, encoding="utf-8"))
@@ -35,8 +36,8 @@ try:
 except (OSError, ValueError):
     _NAMES = {}
 
-# A few tiny fixes so enum fields read like words instead of tokens. Anything not
-# listed passes straight through. I'm after "name + params" here, not real English.
+# A few fixes so enum fields read like words instead of tokens. Anything not
+# listed passes straight through. The goal is "name + params", not real English.
 _ENUM = {"fwd": "forward", "rev": "reverse", "pct": "%", "and": "and", "or": "or"}
 
 # Operators that read best infix: type -> (operator field, [operand value slots]).
@@ -46,7 +47,7 @@ _INFIX = {
     "pg_operator_math": ("MATH", ["NUM1", "NUM2"]),
 }
 
-# Labels for statement slots. The main body doesn't need one, the only slot I label
+# Labels for statement slots. The main body doesn't need one, the only labeled slot
 # is the second branch of an if/else, so the "then" side and "else" side don't blur.
 _STMT_LABEL = {"SUBSTACK2": "else"}
 
@@ -77,7 +78,7 @@ def _value(block, slot_name):
 
 def _value_str(value_elem):
     """Render a <value> element. Either it's a shadow holding a literal, or it's a
-    nested reporter block I recurse into."""
+    nested reporter block to recurse into."""
     for c in value_elem:
         if c.tag == "block":
             return _expr(c)                       # nested reporter, recurse
@@ -102,7 +103,7 @@ def _expr(block):
                 f"{_value(block, 'NUM3')})")
     # Anything else: name, then its own fields, then its value slots (recursed).
     # This is the catch-all that stops an operator or sensor from quietly losing
-    # its inputs when I don't have a special case for it.
+    # its inputs when no special case exists for it.
     fields = [_tidy(_field(block, c.attrib["name"]))
               for c in block if c.tag == "field" and c.attrib.get("name")]
     vals = [f"{v.attrib.get('name', '').lower()} {_value_str(v)}"
@@ -113,7 +114,7 @@ def _expr(block):
 
 def _line(block):
     """The one-line label for a stackable block: name, then fields, then value
-    literals. I hide the mutator fields, since those are just VEX plumbing
+    literals. Mutator fields are hidden, since those are just VEX plumbing
     (things like `anddontwait_mutator`) and mean nothing to a reader."""
     fields = [_tidy(_field(block, c.attrib["name"]))
               for c in block
@@ -141,7 +142,7 @@ def _strip_ns(elem):
 
 def generate_readable_lines(xml_string):
     """Parse a workspace XML string into a list of readable lines, one per stackable
-    block, indented to show the loop and if nesting. Empty or broken input gives back
+    block, indented to show the loop and if nesting. Empty or broken input returns
     [] instead of raising, so a caller can always treat this as best-effort."""
     if not xml_string:
         return []
@@ -173,14 +174,14 @@ def generate_readable_lines(xml_string):
 
 
 def generate_readable_text(xml_string):
-    """Same thing as generate_readable_lines but joined into one string. Gives back "" when
+    """Same as generate_readable_lines but joined into one string. Returns "" when
     there's nothing to show."""
     return "\n".join(generate_readable_lines(xml_string))
 
 
 if __name__ == "__main__":
-    # A quick self-check so the recursion and the infix rendering can't quietly rot
-    # on me. Covers a literal number, an if/else, and a deeply nested condition.
+    # Quick self-check so the recursion and infix rendering can't quietly break.
+    # Covers a literal number, an if/else, and a deeply nested condition.
     demo = (
         '<xml>'
         '<block type="pg_events_when_started"><next>'

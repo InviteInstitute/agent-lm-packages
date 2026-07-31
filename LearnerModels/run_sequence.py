@@ -44,8 +44,8 @@ def compute_run_edit_distances(events):
     """Return {"runs": [{"index", "edit_distance", "ts", "playground"}]}. distance is
     None for the first run overall and also for the first run after a playground
     switch, because diffing code across two different challenges wouldn't mean
-    anything. If a run is missing its playground I treat it as continuing the current
-    one instead of starting a fresh stretch."""
+    anything. If a run is missing its playground, it's treated as continuing the
+    current one instead of starting a fresh stretch."""
     runs = _extract_runs(events)
     out = []
     prev_pg = None

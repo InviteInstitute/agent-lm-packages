@@ -1,8 +1,8 @@
 """
-Takes two block ASTs and gives me back a single number: how much the code changed
+Takes two block ASTs and returns a single number: how much the code changed
 between them, as a tree-edit distance.
 
-I turn each AST into an APTED tree and run it through a VEX-specific cost model
+Each AST is turned into an APTED tree and run through a VEX-specific cost model
 (see VexConfig below). The result is a whole number. 0 means the two runs are
 identical, and the bigger it gets the more the student rewrote. Every trigger except
 inactive is defined straight off this number, so it's the load-bearing piece.
@@ -17,14 +17,14 @@ from .constants import (
 )
 
 
-# A cache I never invalidate. The distance between two XMLs never changes, so once
-# I've computed a pair it's good forever. Keyed on the SHA1 of both workspace XMLs
-# and just held in memory for as long as the process is alive.
+# A cache that is never invalidated. The distance between two XMLs never changes, so
+# once a pair is computed it's good forever. Keyed on the SHA1 of both workspace XMLs
+# and held in memory for as long as the process is alive.
 _distance_cache = {}
 
 
 def clear_cache():
-    """Wipe the cache. Only need this if I'm resetting a session."""
+    """Wipe the cache. Only needed when resetting a session."""
     _distance_cache.clear()
 
 
@@ -34,8 +34,8 @@ def _xml_hash(xml_string):
 
 def cached_edit_distance(prev_xml, curr_xml, prev_ast, curr_ast):
     """Same as compute_edit_distance but memoized on the XML pair. If the two XMLs
-    are byte-for-byte identical I return 0 immediately and never build a tree, which
-    is the common case when a student keeps re-running without editing."""
+    are byte-for-byte identical, returns 0 immediately without building a tree,
+    which is the common case when a student keeps re-running without editing."""
     if prev_xml == curr_xml:
         return 0
     key = (_xml_hash(prev_xml), _xml_hash(curr_xml))
@@ -73,11 +73,11 @@ def _make_node_label(node_info, include_fields=True, field_keys=None):
 
 def ast_to_apted_tree(ast_dict, include_fields=True, field_keys=None, include_edge_nodes=True):
     """Turn an AST dict ({nodes, edges, roots}) into a tree of AptedNodes that APTED
-    can chew on. I order children the same way every time (value, then statement,
+    can process. Children are ordered the same way every time (value, then statement,
     then next, each in its recorded order) so the distance is deterministic. When
-    include_edge_nodes is on, I drop an extra node in for every edge, which makes the
-    distance care about how blocks are wired together and not just which blocks are
-    present. If there's more than one root, I hang them all under a fake ROOT."""
+    include_edge_nodes is on, an extra node is dropped in for every edge, which makes
+    the distance care about how blocks are wired together and not just which blocks
+    are present. If there's more than one root, they all hang under a fake ROOT."""
     nodes = ast_dict.get("nodes", {})
     edges = ast_dict.get("edges", [])
     roots = ast_dict.get("roots", [])

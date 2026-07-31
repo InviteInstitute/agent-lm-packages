@@ -1,8 +1,8 @@
 """All five intervention triggers in one place.
 
 Four of them are "momentary": they read straight off the per-run edit_distance
-sequence and are pure functions with no state and no DB, so I can re-run them any time
-and get the same answer.
+sequence and are pure functions with no state and no DB, so they can be re-run any
+time and produce the same answer.
 
   wheel_spin : >= WHEEL_SPIN_ZERO_RUNS zero-edit runs in a row (the student keeps
                running the same code), goes quiet until a real edit re-arms it.
@@ -11,9 +11,9 @@ and get the same answer.
   iterative  : ITERATIVE_DEFAULT_THRESHOLD runs with edit_distance > 0 (steady editing).
 
 The fifth, inactive, is the odd one out: it's about time, not edit distance, and it's
-stateful (fire, re-alert, resolve over time). I keep the decision pure and leave its two
-database touch-points to the caller. See the "inactive" section near the bottom and the
-README for the full seam.
+stateful (fire, re-alert, resolve over time). The decision is kept pure and its two
+database touch-points are left to the caller. See the "inactive" section near the bottom
+and the README for the full seam.
 """
 from datetime import datetime, timezone
 
@@ -29,13 +29,13 @@ from .constants import (
 # The four momentary triggers (pure, read off the edit_distance sequence)
 # ---------------------------------------------------------------------------
 def detect_run_triggers(edit_distances, iterative_threshold=ITERATIVE_DEFAULT_THRESHOLD):
-    """One pass over the edit_distance sequence (its first element is None). Gives
-    back a (trigger_type, run_index, detail) tuple for each fire. It's deterministic,
-    so whoever calls it can re-run it and just dedupe on run_index instead of worrying
-    about firing the same thing twice.
+    """One pass over the edit_distance sequence (its first element is None). Returns
+    a (trigger_type, run_index, detail) tuple for each fire. It's deterministic,
+    so callers can re-run it and dedupe on run_index instead of worrying about
+    firing the same thing twice.
 
       wheel_spin : a run of zeros hits WHEEL_SPIN_ZERO_RUNS, then it stays quiet until
-                   a non-zero edit re-arms it, so I don't spam it every extra rerun.
+                   a non-zero edit re-arms it, so it doesn't fire every extra rerun.
       resilience : a non-zero edit right after >= RESILIENCE_ZERO_RUNS zeros.
       explorer   : one run with edit_distance >= EXPLORER_EDIT_DISTANCE.
       iterative  : the running count of edits (> ITERATIVE_EDIT_MIN) hits the
@@ -76,15 +76,15 @@ def detect_run_triggers(edit_distances, iterative_threshold=ITERATIVE_DEFAULT_TH
 
 
 def detect_run_triggers_by_playground(runs):
-    """This is the one to actually call. It breaks `runs` into runs of the same
+    """The primary entry point. Breaks `runs` into runs of the same
     playground and runs detect_run_triggers on each stretch on its own, using that
     playground's iterative threshold (ITERATIVE_THRESHOLDS, falling back to the
-    default). `runs` is what compute_run_edit_distances handed back. Returns
+    default). `runs` is what compute_run_edit_distances returned. Returns
     [(trigger_type, global_run_index, detail)].
 
     Doing it per stretch means all the counters reset when a student jumps to a new
-    challenge, which is what you want. I add the stretch offset back so the run
-    indices stay global."""
+    challenge, which is the desired behavior. The stretch offset is added back so
+    run indices stay global."""
     out = []
     i, n = 0, len(runs)
     while i < n:
@@ -107,7 +107,7 @@ def detect_run_triggers_by_playground(runs):
 # ---------------------------------------------------------------------------
 # The two spots where inactive would normally hit a database (reading the last event
 # time and the last time it fired, then writing the new fire) are pulled out into
-# arguments and the return value, so I don't import a DB in here. Whoever integrates
+# arguments and the return value, so no DB is imported here. Whoever integrates
 # this wires those two spots up. There's a full write-up in the README's "inactive DB
 # seam" section.
 
@@ -117,26 +117,26 @@ INACTIVE_RUN_INDEX = -1
 
 def is_inactive(last_event_ts, now):
     """True if the last event is older than the idle threshold. If last_event_ts is
-    None (no events yet) I never call that inactive."""
+    None (no events yet), never considered inactive."""
     if last_event_ts is None:
         return False
     return (now - last_event_ts).total_seconds() >= INACTIVE_TRIGGER_SECONDS
 
 
 def detect_inactive_trigger(last_event_ts, now=None, last_inactive_fire=None):
-    """Work out whether an inactive fire is due right now. Pure, no DB.
+    """Determine whether an inactive fire is due right now. Pure, no DB.
 
     Args:
       last_event_ts:      when the session's most recent event happened (aware UTC),
-                          or None. You read this from wherever you keep events.
+                          or None. Read this from wherever events are stored.
       now:                current time (aware UTC), defaults to utcnow.
       last_inactive_fire: the last inactive fire for this session as
-                          (run_index, fired_at), or None if it's never fired. You read
-                          this from wherever you keep triggers.
+                          (run_index, fired_at), or None if it's never fired. Read
+                          this from wherever triggers are stored.
 
     Returns a (trigger_type, run_index, detail) tuple when something's due, otherwise
-    None. When it fires, you persist it (dedupe on run_index). When it comes back None
-    because the student is active again, that's your cue to close out any open inactive
+    None. When it fires, persist it (dedupe on run_index). When it comes back None
+    because the student is active again, that's the cue to close out any open inactive
     row so the next idle streak starts clean.
 
     How it behaves: it fires once a session has been idle longer than

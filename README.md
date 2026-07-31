@@ -3,7 +3,7 @@
 Three small, **pure** Python packages that turn a VEX (VEXcode VR) student's block event
 stream into things an agent can act on: the current workspace, behavioral triggers, and
 (later) a goal/strategy layer. No database, no web framework. Each package takes plain
-data in and hands plain data back, so any host (reflecks, the agent server, a notebook)
+data in and returns plain data back, so any host (reflecks, the agent server, a notebook)
 can drive them.
 
 Each folder is an independent, `pip`-installable package with its own README.
@@ -35,13 +35,13 @@ flowchart LR
 
 ## Two workspace renderers
 
-Both renderers live in `LogParserDeltaEngine`. They render the same VEX workspace
-as pseudo-code, for two audiences. The names follow one pattern, `generate_<style>_<form>`,
-so which one you want is readable off the call.
+Both renderers live in `LogParserDeltaEngine`. They render the same VEX workspace as
+pseudo-code, for two audiences. The names follow one pattern, `generate_<style>_<form>`,
+so which one is needed is readable off the call.
 
 | Renderer | Audience | What it does |
 |---|---|---|
-| `generate_compact_prompt` (on `SmartDeltaEngine`) / `generate_compact_prompt_from_project` | LLM | Token-cheap listing split into `[Active]` (reachable from a hat block) and `[Orphaned]`. Strips noisy `pg_`/`aim_`/`mixed_` prefixes. No name lookup. |
+| `generate_compact_prompt` (on `SmartDeltaEngine`) / `generate_compact_prompt_from_project` | LLM | Token-cheap listing split into `[Active]` (reachable from a hat block) and `[Orphaned]`. Strips noisy `pg_`/`aim_`/`mixed_` prefixes. No name lookup. Value-slot literals (drive distance, turn degrees) folded into parent fields. |
 | `generate_readable_text` / `generate_readable_lines` | Human | Full display names from `vex_blocks.json`, infix operators (`A < B`), tidied enums (`fwd` to `forward`), inline reporter values, `else:` branch labels. No active/orphan split. |
 
 Use **compact** when building an LLM prompt (spend tokens on structure, not prose). Use
@@ -66,35 +66,12 @@ Each function reads only what it needs:
 | `segment_session(events)` | every event's `event_type` + `ts` (ignores `content`) | `(episodes, pauses)` |
 | `generate_compact_prompt_from_project(project_json_str)` | one `project` field (JSON string) | pseudo-code `str`, or `None` if empty |
 
-The host supplies these (an adapter from wherever you keep events). Nothing in here
+The host supplies these (an adapter from wherever events are stored). Nothing in here
 touches a DB. The one stateful trigger, `inactive`, leaves its two DB touch-points to the
 caller. See [`LearnerModels/README.md`](LearnerModels/README.md).
 
 There's a runnable walkthrough in [`examples/end_to_end.py`](examples/end_to_end.py)
 that feeds one event stream through both packages.
-
-## What's new
-
-Recent changes to the package layout and naming:
-
-- **Readable renderer moved.** `humanize.py` and `vex_blocks.json` moved from
-  `LearnerModels` into `LogParserDeltaEngine`, so both workspace renderers (compact +
-  readable) live in one place. `LearnerModels` is now purely behavioral signals.
-- **Renderer renames.** Both renderers follow one pattern, `generate_<style>_<form>`:
-  - `generate_llm_prompt` -> `generate_compact_prompt` / `generate_compact_prompt_from_project`
-  - `humanize_text` -> `generate_readable_text`
-  - `humanize_workspace` -> `generate_readable_lines`
-- **`BlocklyConfig` renamed to `VexConfig`.** Internal class in `LearnerModels/distance.py`.
-- **"Blockly" dropped everywhere.** The docs and code say "VEX" throughout.
-- **No em dashes or semicolons** in any prose (docs or code comments).
-- **Compact renderer data fix.** The compact prompt now captures value-slot literals
-  (drive distance, turn degrees, wait duration, comparison thresholds) that were
-  previously dropped. Shadow blocks are tracked, initial fields on create events are
-  captured, field changes on shadows propagate to the parent, and orphan status is
-  recomputed on every delta move.
-
-If you imported `humanize_text` from `LearnerModels`, switch to
-`from LogParserDeltaEngine import generate_readable_text`.
 
 ## Install / test
 

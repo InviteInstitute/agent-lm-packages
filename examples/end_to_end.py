@@ -105,7 +105,7 @@ def main():
     print(f"  {len(episodes)} episodes: {[e.get('episode_type') for e in episodes]}")
     print(f"  {len(pauses)} pauses:   {pause_summary}   (episode_type, duration_s)")
 
-    # 6. The sustained inactive trigger, pure: YOU pass in the two facts it needs.
+    # 6. The sustained inactive trigger, pure: the caller passes in the two facts it needs.
     print("\n" + BAR)
     print("6. detect_inactive_trigger, the 5th trigger (DB-free)")
     print(BAR)
