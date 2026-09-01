@@ -1,4 +1,4 @@
-# LogParserDeltaEngine
+# log_parser_delta_engine
 
 Rebuild a VEX **workspace** from a student's activity and render it as pseudo-code. It's
 both the log parser (folds log events into state) and the delta engine (replays the
@@ -10,7 +10,7 @@ Stdlib only (`json`, `xml.etree`), nothing to install.
 ## Quick start
 
 ```python
-from LogParserDeltaEngine import (
+from log_parser_delta_engine import (
     smart_delta_engine, generate_compact_prompt, generate_compact_prompt_from_content,
     generate_readable_text, generate_readable_lines,
 )
@@ -59,6 +59,7 @@ generate_readable_lines(xml_string)   # list[str], same content as a list
 |---|---|---|
 | `generate_compact_prompt(xml_string)` | workspace XML `str` (or `None`) | pseudo-code `str`, or `None` if empty/unparseable |
 | `generate_compact_prompt_from_content(content)` | parsed VEX log content dict | pseudo-code `str`, or `None` if no workspace |
+| `generate_compact_prompt_from_project(project)` | raw `content.project` value (dict or JSON `str`) | pseudo-code `str`, or `None` if empty/no blocks |
 | `smart_delta_engine().process_log(log_event)` | dict with a `content` key (JSON str or dict) | `None` (mutates engine state) |
 | `smart_delta_engine().get_runnable_block_count()` | none | `int` (non-shadow blocks reachable from a hat) |
 | `smart_delta_engine().get_total_blocks()` | none | `int` (all non-shadow blocks tracked) |

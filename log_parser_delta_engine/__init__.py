@@ -1,5 +1,5 @@
 """
-LogParserDeltaEngine: take a student's VEX log stream and rebuild what their VEX
+log_parser_delta_engine: take a student's VEX log stream and rebuild what their VEX
 workspace looks like right now, then render it as pseudo-code. Two renderers live here:
 
   generate_compact_prompt          compact, token-cheap, [Active]/[Orphaned] split (LLM)
@@ -8,8 +8,9 @@ workspace looks like right now, then render it as pseudo-code. Two renderers liv
 Each renderer has a _from_content variant that takes a parsed VEX log content dict
 and extracts the workspace XML internally.
 
-  from LogParserDeltaEngine import (
-      smart_delta_engine, generate_compact_prompt, generate_compact_prompt_from_content,
+  from log_parser_delta_engine import (
+      smart_delta_engine, generate_compact_prompt,
+      generate_compact_prompt_from_content, generate_compact_prompt_from_project,
       generate_readable_text, generate_readable_text_from_content,
       generate_readable_lines, generate_readable_lines_from_content,
   )
@@ -47,6 +48,15 @@ def generate_compact_prompt_from_content(content):
     return generate_compact_prompt(xml) if xml else None
 
 
+def generate_compact_prompt_from_project(project_json_str):
+    """One-shot compact prompt from a raw VEX `project` value: the dict or JSON
+    string stored in a log event's `content.project` field, which itself carries
+    the `workspace` XML. Thin wrapper over generate_compact_prompt_from_content
+    (a bare project is just content with one key). Returns None if the project is
+    empty/None or yields no blocks."""
+    return generate_compact_prompt_from_content({"project": project_json_str})
+
+
 def generate_readable_text_from_content(content):
     """One-shot readable pseudo-code from a parsed VEX log content dict. Extracts
     the workspace XML internally. Returns "" if the content has no workspace."""
@@ -64,6 +74,7 @@ __all__ = [
     "smart_delta_engine",
     "generate_compact_prompt",
     "generate_compact_prompt_from_content",
+    "generate_compact_prompt_from_project",
     "generate_readable_text",
     "generate_readable_text_from_content",
     "generate_readable_lines",

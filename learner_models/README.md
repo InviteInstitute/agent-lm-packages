@@ -1,4 +1,4 @@
-# LearnerModels
+# learner_models
 
 Behavioral signals off a student's VEX event stream: how much their code changes per run,
 the five intervention triggers, and the session broken into episodes. All pure, no DB and
@@ -7,12 +7,12 @@ no framework.
 Needs `apted` (installed automatically with `pip install .` from the repo root).
 Everything else is stdlib.
 
-Workspace rendering (compact + readable) lives in `LogParserDeltaEngine`.
+Workspace rendering (compact + readable) lives in `log_parser_delta_engine`.
 
 ## Pipeline
 
 ```python
-from LearnerModels import (
+from learner_models import (
     compute_run_edit_distances, detect_run_triggers_by_playground, segment_session,
 )
 
@@ -100,7 +100,7 @@ fully pure like the others. This package keeps the *decision* pure and leaves th
 storage touch-points to the caller:
 
 ```python
-from LearnerModels import detect_inactive_trigger
+from learner_models import detect_inactive_trigger
 
 fire = detect_inactive_trigger(
     last_event_ts,            # read from session events: most recent event timestamp
@@ -130,5 +130,6 @@ resurface periodically.
 | `distance.py` | `cached_edit_distance`, `compute_edit_distance` | APTED tree-edit distance, VEX cost model, XML-pair memo |
 | `ast_builder.py` | `xml_to_block_ast`, `extract_workspace_xml` | VEX XML into an AST dict |
 | `triggers.py` | `detect_run_triggers[_by_playground]`, `is_inactive`, `detect_inactive_trigger` | all 5 triggers (4 momentary + the inactive DB seam above) |
-| `episodes.py` | `segment_session`, `segment_episodes` | session into episodes + pauses |
+| `episodes.py` | `segment_session`, `segment_episodes`, `boundary_kind` | session into episodes + pauses |
+| `switches.py` | `detect_switches` | identity switches (handle re-casing, class-code change) off the live stream |
 | `constants.py` | thresholds + APTED costs | one place for all the tunable numbers |
