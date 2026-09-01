@@ -6,12 +6,12 @@ Run it (from the repo root, after `pip install .`):
     python examples/end_to_end.py
 
 It builds a small synthetic session and shows, in order:
-  1. LogParserDeltaEngine, the current workspace as a compact LLM-ready prompt
-  2. LogParserDeltaEngine.generate_readable_text, the workspace as readable pseudo-code
-  3. LearnerModels.compute_run_edit_distances, per-run code-change magnitude
-  4. LearnerModels.detect_run_triggers_by_playground, the 4 momentary triggers
-  5. LearnerModels.segment_session, the session split into episodes + pauses
-  6. LearnerModels.detect_inactive_trigger, the 5th (sustained) trigger, DB-free
+  1. log_parser_delta_engine, the current workspace as a compact LLM-ready prompt
+  2. log_parser_delta_engine.generate_readable_text, the workspace as readable pseudo-code
+  3. learner_models.compute_run_edit_distances, per-run code-change magnitude
+  4. learner_models.detect_run_triggers_by_playground, the 4 momentary triggers
+  5. learner_models.segment_session, the session split into episodes + pauses
+  6. learner_models.detect_inactive_trigger, the 5th (sustained) trigger, DB-free
 
 Everything below is plain data in, plain data out, no DB, no framework.
 """
@@ -20,10 +20,10 @@ from datetime import datetime, timedelta, timezone
 import sys, os
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from LogParserDeltaEngine import (
+from log_parser_delta_engine import (
     generate_compact_prompt, generate_readable_text,
 )
-from LearnerModels import (
+from learner_models import (
     compute_run_edit_distances, detect_run_triggers_by_playground,
     segment_session, detect_inactive_trigger,
 )
@@ -43,7 +43,7 @@ WORKSPACE = (
 
 
 def make_run(ts, workspace=WORKSPACE, playground="RoverRescue"):
-    """One runProject event in the shape both LearnerModels entry points read."""
+    """One runProject event in the shape both learner_models entry points read."""
     return {
         "event_type": "runProject",
         "ts": ts,
@@ -64,7 +64,7 @@ BAR = "=" * 72
 def main():
     # 1. Current workspace as a compact LLM prompt.
     print(BAR)
-    print("1. LogParserDeltaEngine, current workspace prompt")
+    print("1. log_parser_delta_engine, current workspace prompt")
     print(BAR)
     print(generate_compact_prompt(WORKSPACE))
 

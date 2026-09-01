@@ -12,16 +12,16 @@ Each folder has its own README. Install both with `pip install .` from the repo 
 
 | Folder | What it does | Deps | Status |
 |---|---|---|---|
-| [`LogParserDeltaEngine/`](LogParserDeltaEngine/) | Replay a log stream (or one project XML) into the current VEX workspace and render it as pseudo-code (compact + readable). | stdlib | populated |
-| [`LearnerModels/`](LearnerModels/) | Per-run edit distances (APTED), the 5 behavioral triggers, and session episodes. | `apted` | populated |
-| [`GoalStrategy/`](GoalStrategy/) | The pedagogy layer (goal + feedback strategy). | none yet | empty placeholder |
+| [`log_parser_delta_engine/`](log_parser_delta_engine/) | Replay a log stream (or one project XML) into the current VEX workspace and render it as pseudo-code (compact + readable). | stdlib | populated |
+| [`learner_models/`](learner_models/) | Per-run edit distances (APTED), the 5 behavioral triggers, and session episodes. | `apted` | populated |
+| [`goal_strategy/`](goal_strategy/) | The pedagogy layer (goal + feedback strategy). | none yet | empty placeholder |
 
 ## How they fit together
 
 ```mermaid
 flowchart LR
-    A["VEX event stream<br/>runProject, blockMoved, loadProject, ..."] --> B[LogParserDeltaEngine]
-    A --> C[LearnerModels]
+    A["VEX event stream<br/>runProject, blockMoved, loadProject, ..."] --> B[log_parser_delta_engine]
+    A --> C[learner_models]
 
     B --> D[current workspace]
     D --> E["LLM prompt<br/><i>what is the code now?</i>"]
@@ -30,12 +30,12 @@ flowchart LR
     F --> G["triggers (5)"]
     G --> H["episodes<br/><i>what is the student doing?</i>"]
 
-    G --> I["GoalStrategy (future)<br/>pick feedback / goal"]
+    G --> I["goal_strategy (future)<br/>pick feedback / goal"]
 ```
 
 ## Two workspace renderers
 
-Both renderers live in `LogParserDeltaEngine`. They render the same VEX workspace as
+Both renderers live in `log_parser_delta_engine`. They render the same VEX workspace as
 pseudo-code, for two audiences. The names follow one pattern, `generate_<style>_<form>`,
 so which one is needed is readable off the call.
 
@@ -72,7 +72,7 @@ Each function reads only what it needs:
 
 The host supplies these (an adapter from wherever events are stored). Nothing in here
 touches a DB. The one stateful trigger, `inactive`, leaves its two DB touch-points to the
-caller. See [`LearnerModels/README.md`](LearnerModels/README.md).
+caller. See [`learner_models/README.md`](learner_models/README.md).
 
 There's a runnable walkthrough in [`examples/end_to_end.py`](examples/end_to_end.py)
 that feeds one event stream through both packages.
@@ -81,6 +81,6 @@ that feeds one event stream through both packages.
 
 ```bash
 pip install .                            # installs both packages (pulls in apted)
-python test_smoke.py                     # 34 tests across both packages
+python test_smoke.py                     # 40 tests across both packages
 python examples/end_to_end.py            # narrated walkthrough with real output
 ```

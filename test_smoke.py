@@ -1,4 +1,4 @@
-"""Test suite for LogParserDeltaEngine and LearnerModels.
+"""Test suite for log_parser_delta_engine and learner_models.
 
 Run with: python test_smoke.py
 Requires `apted` (installed automatically with `pip install .`).
@@ -6,14 +6,15 @@ Requires `apted` (installed automatically with `pip install .`).
 import json
 from datetime import datetime, timedelta, timezone
 
-from LogParserDeltaEngine import (
+from log_parser_delta_engine import (
     generate_compact_prompt, generate_compact_prompt_from_content,
+    generate_compact_prompt_from_project,
     generate_readable_text, generate_readable_lines,
     smart_delta_engine,
 )
-from LearnerModels import (
+from learner_models import (
     compute_run_edit_distances, detect_run_triggers, detect_run_triggers_by_playground,
-    detect_inactive_trigger, segment_session, INACTIVE_RUN_INDEX,
+    detect_inactive_trigger, segment_session, detect_switches, INACTIVE_RUN_INDEX,
 )
 
 SIMPLE_XML = (
@@ -41,7 +42,7 @@ RICH_XML = (
 
 
 # ---------------------------------------------------------------------------
-# LogParserDeltaEngine: compact renderer
+# log_parser_delta_engine: compact renderer
 # ---------------------------------------------------------------------------
 def test_compact_prompt_basic():
     prompt = generate_compact_prompt(SIMPLE_XML)
@@ -100,7 +101,7 @@ def test_compact_prompt_from_content_empty():
 
 
 # ---------------------------------------------------------------------------
-# LogParserDeltaEngine: readable renderer
+# log_parser_delta_engine: readable renderer
 # ---------------------------------------------------------------------------
 def test_readable_text_basic():
     text = generate_readable_text(RICH_XML)
@@ -124,7 +125,7 @@ def test_readable_empty_inputs():
 
 
 # ---------------------------------------------------------------------------
-# LogParserDeltaEngine: delta path
+# log_parser_delta_engine: delta path
 # ---------------------------------------------------------------------------
 def test_delta_create_with_initial_fields():
     engine = smart_delta_engine()
@@ -231,7 +232,7 @@ def test_delta_block_counts_exclude_shadows():
 
 
 # ---------------------------------------------------------------------------
-# LearnerModels: edit distances
+# learner_models: edit distances
 # ---------------------------------------------------------------------------
 def _make_run(ts, workspace, playground="RoverRescue"):
     return {
@@ -272,7 +273,7 @@ def test_playground_switch_resets_distance():
 
 
 # ---------------------------------------------------------------------------
-# LearnerModels: triggers
+# learner_models: triggers
 # ---------------------------------------------------------------------------
 def test_wheel_spin_fires():
     fired = {t for (t, _i, _d) in detect_run_triggers([None, 0, 0, 0, 0, 0, 0])}
@@ -306,7 +307,7 @@ def test_triggers_empty_sequence():
 
 
 # ---------------------------------------------------------------------------
-# LearnerModels: inactive trigger
+# learner_models: inactive trigger
 # ---------------------------------------------------------------------------
 def test_inactive_first_fire():
     now = datetime.now(timezone.utc)
@@ -343,7 +344,7 @@ def test_inactive_none_ts():
 
 
 # ---------------------------------------------------------------------------
-# LearnerModels: session segmentation
+# learner_models: session segmentation
 # ---------------------------------------------------------------------------
 def test_segment_session_basic():
     events = [
@@ -381,6 +382,48 @@ def test_segment_session_no_ts():
     episodes, pauses = segment_session(events)
     assert len(episodes) >= 1
     assert pauses == []
+
+
+# ---------------------------------------------------------------------------
+# log_parser_delta_engine: compact prompt from a raw project value
+# ---------------------------------------------------------------------------
+def test_compact_prompt_from_project_dict():
+    prompt = generate_compact_prompt_from_project({"workspace": RICH_XML})
+    assert prompt is not None
+    assert "drive_for" in prompt
+    assert "AMOUNT=200" in prompt
+
+
+def test_compact_prompt_from_project_json_string():
+    prompt = generate_compact_prompt_from_project(json.dumps({"workspace": RICH_XML}))
+    assert prompt is not None
+    assert "drive_for" in prompt
+
+
+def test_compact_prompt_from_project_empty():
+    assert generate_compact_prompt_from_project(None) is None
+    assert generate_compact_prompt_from_project({}) is None
+    assert generate_compact_prompt_from_project({"workspace": ""}) is None
+
+
+# ---------------------------------------------------------------------------
+# learner_models: identity switches
+# ---------------------------------------------------------------------------
+def test_switches_casing_and_class():
+    switches = detect_switches("cobra3", "FPFVDH", "Cobra3", "AFURRR")
+    assert switches == [("casing", "cobra3", "Cobra3"), ("class", "FPFVDH", "AFURRR")]
+
+
+def test_switches_casing_only():
+    assert detect_switches("cobra3", "FPFVDH", "Cobra3", "FPFVDH") == [
+        ("casing", "cobra3", "Cobra3")
+    ]
+
+
+def test_switches_none_when_unchanged_or_missing():
+    assert detect_switches("cobra3", "FPFVDH", "cobra3", "FPFVDH") == []
+    assert detect_switches(None, None, "cobra3", "FPFVDH") == []  # first event, no prior
+    assert detect_switches("", "", "cobra3", "FPFVDH") == []      # empty prior is not a switch
 
 
 # ---------------------------------------------------------------------------
