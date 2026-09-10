@@ -1,0 +1,111 @@
+# Goal card for Castle Crashers — task spec §8 in card form.
+# Every numeric threshold and entity name lives here (or in the playground card), never in src/.
+playground: castle_crashers
+version: 1
+goals:
+  - id: playground_engagement
+    label: Engage with the playground
+    # movement_authored removed (reviewer rung-review ruling 2026-08-25):
+    # saturated (100% of the validation set) and redundant with robot_moved —
+    # empty intent is a modelling statement, robot_moved carries the goal.
+    intent: []
+    attainment:
+      - name: robot_moved
+        indicator: displacement_from_spawn
+        binding: {source: outcome, x_field: gps_x_position, y_field: gps_y_position}
+        rungs:
+          direction: higher_is_better
+          edges: [100]
+          labels: [stationary, moved]
+          provenance: abstract — 100mm movement-vs-noise judgment; ruled KEEP 2026-08-25 (default drive block travels 200mm, so the edge sits well inside meaningful movement)
+
+  - id: engage_plow
+    label: Engage the plow
+    intent:
+      - name: magnet_activation_intent
+        indicator: code_state_authored
+        binding: {block_family: magnet}
+        rungs:
+          labels: [absent, present_not_boost, boost]
+          provenance: exact — categorical over authored magnet states, nothing numeric to calibrate
+      - name: plow_approach_intent
+        indicator: min_distance_to_object
+        binding: {object: plow}
+        rungs:
+          direction: lower_is_better
+          reference: object.tolerance          # resolves to 190 from the playground card
+          edges_as_multiples: [1.0, 2.0, 3.0]
+          labels: [reached, near, approached, never_close]
+          provenance: design — edges derive from the plow's 190mm navigation-semantic tolerance (playground card), multiples 1/2/3
+        flag_rules:
+          - flag: no_declared_intent           # proximity uncorroborated by code — likely sweep spillover
+            when_rung_in: [reached, near]
+            other_indicator: magnet_activation_intent
+            other_rung_in: [absent]
+    attainment:
+      - name: plow_proximity_execution
+        indicator: state_active_attachment_clearance
+        binding:
+          object: plow
+          state: magnet_active
+          # Near-contact attachment model (OI-21 probe series, 2026-08-21 —
+          # supersedes the uniform 190mm radius, which was a reference-point
+          # artifact; see plow.attachment in the playground card and
+          # FINDINGS.md). Value = minimum clearance (mm) of the MAGNET POINT
+          # beyond the structure attach gaps while the magnet is armed;
+          # <= 0 estimates attachment.
+        rungs:
+          direction: lower_is_better
+          edges: [0.0]
+          labels: [attach_estimated, armed_never_close]
+          absent_label: not_armed              # magnet never armed — meaningful absence, not abstention
+          provenance: design — value is a margin against the measured attach gaps (blade 75mm, hitch 40mm; OI-21 probes), so the 0.0 edge is physically grounded; calibration means revising the card gaps
+
+  - id: clear_debris_zone
+    label: Clear the debris zone
+    intent:
+      - name: debris_zone_coverage
+        indicator: region_coverage
+        binding: {region: debris_zone}
+        rungs:
+          direction: higher_is_better
+          edges: [0.05, 0.10, 0.20]            # T-3 ladder, carried as recorded
+          labels: [negligible, some, meaningful, systematic]
+          provenance: abstract — inherited T-3 ladder carried as recorded; denominator is the region AABB (see the playground card's coverage_fraction_caveat)
+    attainment:
+      - name: weight_cleared
+        indicator: outcome_field
+        binding: {field: weight_cleared}
+        rungs:
+          direction: higher_is_better
+          # Goal-anchored bands (reviewer ruling 2026-08-25): students were
+          # given "at least 700kg, then get as much as you can". Reviewer-set
+          # boundaries: 700 -> initial_goal (edge 701), 2500 -> med_goal
+          # (edge 2501, ruled same day: "start high at 2501"), 4000 ->
+          # advanced_goal. 0.001 stays the nonzero tripwire.
+          edges: [0.001, 701, 2501, 4000]
+          labels: [none, initial_goal, med_goal, high_goal, advanced_goal]
+          provenance: design — bands anchored to the communicated data-collection target (>=700kg, then maximize); initial achievable without strategy, med in one drive (physics-dependent), high needs planning, advanced systematic clearing
+
+
+  - id: remain_on_island
+    label: Remain on the island
+    # Reviewer-added goal (2026-08-25). Two attainment indicators by design:
+    # the OBSERVED reading is authoritative; the SIM reading fills the
+    # abstained (no-telemetry) cases and, by carrying the simulation channel,
+    # denotes lower certainty of achievement. A sensor test battery may feed
+    # the sim side later (OI-20 lane).
+    intent: []
+    attainment:
+      - name: on_island_observed
+        indicator: outcome_on_island
+        binding: {x_field: gps_x_position, y_field: gps_y_position}
+        rungs:
+          labels: [unknown, off_island, on_island]
+          provenance: exact — categorical from the observed final GPS vs the island boundary polygon (any-part-on-island tolerance, playground card)
+      - name: on_island_sim
+        indicator: sim_on_island
+        binding: {}
+        rungs:
+          labels: [unknown, off_island, on_island]
+          provenance: exact — categorical from the simulation (§6a rule; a simulated boundary exit means the run ended off); simulation channel marks the lower certainty

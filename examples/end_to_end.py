@@ -116,6 +116,23 @@ def main():
     print("\n" + BAR)
     assert any(t == "wheel_spin" for t, _i, _d in fires), "expected wheel_spin to fire"
     assert fire and fire[0] == "inactive"
+    from goal_strategy import goal_profiles_from_events
+    goal_events = [make_run(t0, playground="CastleCrasherPlus"),
+                   make_run(t0 + 60, playground="RoverRescue"),
+                   make_run(t0 + 120, playground="CastleCrasherPlus")]
+    goal_output = goal_profiles_from_events(goal_events, session_id="synthetic/session",
+        outcomes_by_run_index={0: {"playground_data": {"weight_cleared": 700},
+                                   "end_status": "completed"}})
+    goal_distances = compute_run_edit_distances(goal_events)["runs"]
+    goal_triggers = detect_run_triggers_by_playground(goal_distances)
+    print("7. Goal evidence joined to learner-model run indices")
+    for evidence, distance in zip(goal_output["runs"], goal_distances):
+        assert evidence["index"] == distance["index"]
+        triggers = [name for name, index, detail in goal_triggers if index == evidence["index"]]
+        print(f"  run {evidence['index']}: {evidence['status']}, distance={distance['edit_distance']}, triggers={triggers}")
+    assert [x["status"] for x in goal_output["runs"]] == ["profiled", "unsupported_playground", "profiled"]
+    assert goal_output["runs"][0]["profile"]["outcome_available"]
+    assert not goal_output["runs"][2]["profile"]["outcome_available"]
     print("end-to-end OK")
 
 

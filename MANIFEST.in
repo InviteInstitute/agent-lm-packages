@@ -1,0 +1,11 @@
+include README.md LICENSE pyproject.toml conftest.py test_smoke.py
+recursive-include examples *.py
+recursive-include goal_strategy *.py *.yaml *.md *.js requirements.txt
+include goal_strategy/detector/data/blocks.csv
+recursive-include goal_strategy/design_instructions *.xlsx
+prune data
+prune build
+prune dist
+global-exclude __pycache__ *.py[cod]
+include goal_strategy/viz/vendor/sprites.png
+include goal_strategy/viz/vendor/BLOCKLY_LICENSE

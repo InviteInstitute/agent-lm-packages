@@ -4,17 +4,29 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "agent-lm-packages"
-version = "0.1.0"
+version = "0.2.0"
 description = "VEX event stream packages for agent-driven learning"
-requires-python = ">=3.9"
-dependencies = ["apted>=1.0"]
+requires-python = ">=3.10"
+dependencies = ["apted>=1.0", "pyyaml"]
 
 [project.optional-dependencies]
 log-parser = []
 learner-models = ["apted>=1.0"]
 
+goal-strategy = ["pyyaml"]
+goal-strategy-analysis = ["pandas", "pyarrow"]
+goal-strategy-viz = ["pandas", "pyarrow", "streamlit>=1.50", "plotly>=6"]
+dev = ["pytest", "build", "pandas", "pyarrow", "streamlit>=1.50", "plotly>=6"]
+
 [tool.setuptools]
-packages = ["log_parser_delta_engine", "learner_models"]
+include-package-data = false
+packages = ["log_parser_delta_engine", "learner_models", "goal_strategy", "goal_strategy.detector", "goal_strategy.detector.parsing", "goal_strategy.detector.simulation", "goal_strategy.viz"]
 
 [tool.setuptools.package-data]
 log_parser_delta_engine = ["vex_blocks.json"]
+goal_strategy = ["README.md", "configs/*.yaml", "configs/playgrounds/*.yaml", "configs/goals/*.yaml", "configs/robot/*.yaml", "configs/testcases/*/*.yaml"]
+"goal_strategy.detector" = ["data/*.csv"]
+"goal_strategy.viz" = ["*.js", "vendor/*.js", "vendor/*.png", "vendor/BLOCKLY_LICENSE"]
+
+[tool.pytest.ini_options]
+markers = ["corpus: requires confidential goal datasets or generated validation artifacts"]

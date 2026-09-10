@@ -1,0 +1,810 @@
+playground_id: castle_crashers
+# VR-Seq (reviewer ruling 2026-08-26, SCHEDULING_MODEL §12.4/§12.5):
+# cooperative is the DEFAULT execution model — transliterated from VEX's
+# shipped @vexcode/scratch-vm fork, validated by G3 identity, the probe
+# retrodiction, G5 attribution (14 named changes) and G6 battery gate.
+simulation:
+  scheduler: cooperative
+playground_name: Castle Crashers Plus
+vex_playground_key: CastleCrasherPlus
+
+coordinate_system:
+  dimensions: 2
+  units: mm
+  origin_description: "Center of hexagonal field"
+  heading_convention: >
+    VEX heading 0° = negative X (West = 180° in math convention).
+    turn_for(RIGHT) = clockwise in math convention (heading decreases).
+    turn_for(LEFT) = counter-clockwise in math convention (heading increases).
+    Simulator conversion: spawn_heading = (180 - card_heading) % 360
+    Turn logic: RIGHT subtracts angle, LEFT adds angle. Both confirmed correct.
+  heading_verified: true
+  verification_notes: >
+    Confirmed by driving FORWARD from spawn at heading 0 — x decreased from
+    1014 to 814 over 200mm. Right turn 90° then FORWARD increased y from 50
+    to 250 over 200mm. drivetrain.heading() returns 0 throughout and does not
+    update — do not rely on heading() for orientation tracking.
+
+field_geometry:
+  shape: hexagon
+  verified: true
+  verification_method: "GPS probing with down_eye RED detection"
+  playable_radius_mm: 1763   # inner hex apothem (flat side to center) from image analysis [M]; circular fallback — superseded by visualization_geometry.island.inner_hex_vertices_mm for boundary checking
+  heading_fix_notice: >
+    VEX heading 0° = negative X confirmed 2026-04-07. Simulator spawn_heading
+    conversion corrected from (90 - card_heading) to (180 - card_heading).
+    All path reconstructions generated before this fix are invalid and must be
+    recomputed before any indicator values derived from simulated paths are used.
+  left_edge:
+    description: "Flat vertical edge — consistent across y positions"
+    x: -1711
+    verified: true
+    verification_points:
+      - {x: -1711, y: -21}
+      - {x: -1711, y: -498}
+  right_extent:
+    x: 1614
+    verified: true
+    verification_points:
+      - {x: 1614, y: -450}
+      - {x: 1614, y: -500}
+  top_extent:
+    max_y: 1766
+    near_x: 14
+    verified: true
+    verification_points:
+      - {x: 1013, y: 1274}
+      - {x: 14,   y: 1766}
+      - {x: -483, y: 1599}
+    notes: >
+      Top boundary is not flat — y decreases as x moves away from center
+      in either direction, consistent with hexagonal geometry.
+  bottom_extent:
+    min_y: -1867
+    near_x: -17
+    verified: true
+    verification_points:
+      - {x: 1013, y: -1275}
+      - {x: -17,  y: -1867}
+    notes: >
+      Bottom extent (~1867mm) is slightly larger than top extent (~1766mm)
+      suggesting minor asymmetry or coordinate origin is not perfectly
+      centered vertically. Bottom boundary shape mirrors top.
+  approximate_bounds:
+    x_min: -1711
+    x_max: 1614
+    y_min: -1867
+    y_max: 1766
+  previous_yaml_notes: >
+    Previous config assumed x range ±1644 and y range ±1644 based on
+    circumscribed square of 3288mm diameter. Probing reveals actual playable
+    boundary is asymmetric — left edge at -1711, right edge at 1614,
+    bottom extent larger than top. Border width of 88mm from VEX API
+    confirmed but red border detection threshold may vary slightly.
+
+# Simulation-fidelity acceptance thresholds (reviewer ruling 2026-08-19;
+# settles the ONLINE plan's D6 for this playground — values live HERE, in
+# the card). ON-island: final XY within one robot footprint (the half-
+# diagonal, same physical tolerance as the boundary ruling). OFF-island:
+# binary agreement suffices when both finals are off (position beyond the
+# edge is not meaningful); when the finals DISAGREE about off-island, accept
+# if the GPS final lies within the relaxed edge-slip tolerance of the
+# simulated trajectory — the playground's fall-off physics makes the robot
+# slip and shift as it goes over the edge (reviewer ruling on WREN-C004 /
+# WREN-C096; symmetric mirror covers WREN-C032, where the sim tipped at an
+# edge-graze reality survived).
+fidelity_thresholds:
+  on_island_xy_mm: 71.2          # robot half-diagonal (hypot(133, 50.8)/2)
+  # Playground quirk (reviewer-observed 2026-08-24): near the island edge
+  # the robot can SLIP — a random heading change whose downstream behavior
+  # doesn't follow real-robot physics (e.g. heading changes but travel
+  # continues along the intended path, wheels crabbed). Not modelable, not
+  # attributable per-run. Paths entering this band are ANNOTATED as
+  # divergence-possible — nothing more (ruling: simulate as best we can,
+  # flag the potential, don't over-explain; other playgrounds will have
+  # their own quirks).
+  edge_divergence_zone_mm: 71.2  # any part of the robot overhangs the edge
+  off_island_edge_slip_mm: 400   # gps-to-trajectory, when off-island status disagrees
+  # Outcome-override (reviewer ruling 2026-08-19, WREN-C032): when the sim
+  # reports a boundary exit but the MEASURED outcome says the run ended
+  # on-island — and the run was not stopped early — the exit is judged an
+  # artifact of accumulated dead-reckoning drift over a long contact-heavy
+  # path: defer to the outcome, score the FULL program (no truncation), and
+  # mark indicators whose evidence depends on the post-exit path with the
+  # conditional flag evidence_post_sim_exit.
+  sim_exit_outcome_override:
+    stopped_field: project_stopped_by_user   # outcome field that disqualifies the override
+    # The override applies only when the outcome CORROBORATES the simulated
+    # path: GPS final within this bound of the trajectory ("the path is
+    # right, only the endpoint differs"). Guards against deferring to
+    # outcome on genuinely divergent trajectories (WREN-C060: 1374mm — a
+    # sensor-model divergence, stays truncated).
+    trajectory_corroboration_mm: 400
+
+field_boundary:
+  shape: polygon
+  color: red
+  description: >
+    OUTER edge of the red boundary ring — the end of the island (reviewer
+    ruling 2026-08-18): a robot on the red ring is still ON the island; the
+    ring is the sensor-detectable safety margin. Off-island = beyond this
+    polygon. Vertices ordered clockwise from top, mm.
+  polygon_mm: &cc_outer_edge
+    - [    7.0,  1974.0]   # top          [screenshot-calibrated 2026-08-18]
+    - [ 1722.0,   994.0]   # top_right
+    - [ 1722.0,  -995.0]   # bottom_right
+    - [   10.0, -1970.0]   # bottom
+    - [-1703.0,  -995.0]   # bottom_left
+    - [-1703.0,   998.0]   # top_left
+  red_detection_inner_polygon_mm: &cc_red_inner
+    # Grass/ring interface — where down_eye.detect(RED) STARTS firing. For the
+    # sensor-simulation cluster (OI-5/OI-10); NOT the island edge. Same
+    # calibration. Ring width ≈ 89mm (VEX API: ~88mm).
+    - [    7.0,  1876.0]
+    - [ 1634.0,   942.0]
+    - [ 1634.0,  -943.0]
+    - [   10.0, -1872.0]
+    - [-1614.0,  -943.0]
+    - [-1614.0,   947.0]
+  source: >
+    Screenshot calibration 2026-08-18 (data/screenshot_50mm/): scale 4.667mm/px
+    anchored by a measured 50mm robot displacement at spawn; validated by ring
+    width 89mm vs VEX API ~88mm. Replaces the earlier image-measured polygon
+    ((-23.7,1942.2)…(-1707.3,972.6)), which traced between the ring's edges and
+    was 40–100mm misplaced relative to either true line.
+  verified: true
+
+# What the eyes can see on the floor. `eye:` restricts a zone to one eye
+# (the red ring is 2D — down eye only, reviewer 2026-08-19); omit for any eye.
+# A zone is either a filled polygon (polygon_mm) or a ring band (between:
+# inner/outer polygons). Polygons are aliased from field_boundary — one
+# calibration, one source of truth.
+color_zones:
+  # NO green zone: reviewer probe 2026-08-19 — the ground is CODED AS NO
+  # COLOR ('eye detects none' is TRUE on open grass; paired with `not` this
+  # is the idiom for reacting to any colored object). Only the red line has
+  # a detectable color; castle/plow are colorless despite their UI look.
+  - color: red
+    eye: down
+    # Reviewer ruling 2026-08-19 (VEX API: down eye "tuned to not detect the
+    # floor as an object; other items will register"): the red line is a
+    # defined object in the space — down-eye near_object fires over it. The
+    # grass floor and ocean are NOT objects (grass stays color-detectable).
+    registers_as_object: true
+    description: >
+      The red boundary ring — 2D, detectable ONLY by the down eye (reviewer
+      2026-08-19; front eye "did not reliably detect red border"). Fires from
+      the grass/ring interface out to the island edge.
+    between:
+      inner_polygon_mm: *cc_red_inner
+      outer_polygon_mm: *cc_outer_edge
+
+objects:
+  plow:
+    object_type: tool
+    navigation_target: true
+    movable: true                   # attaches to the magnet and travels with the robot;
+                                    # disappears if pushed off the island (reviewer 2026-08-19).
+                                    # (movable flag documentary — main sim never moves objects.)
+    disappears_off_island: true
+    color: null                     # TODO reviewer: front-eye-detectable color (red/green/blue/none)
+    body_radius_mm: 95              # PROVISIONAL: blade half-width from screenshots; 3D physical
+                                    # extent for contact/detection — distinct from the 190mm
+                                    # semantic (magnetic) tolerance below
+    x: 163
+    y: 1169
+    tolerance: 190                  # navigation-semantic radius (landmarks, approach
+                                    # rungs — OI-9 reviews those edges). NO LONGER the
+                                    # attachment model: see `attachment:` below.
+    tolerance_verified: true
+    position_verified: true
+    # ── Attachment model (OI-21 probe series, 2026-08-21; 15 ground-truth
+    # datapoints unified — FINDINGS). The magnet ATTACHES when the MAGNET
+    # POINT (front mount, robot card magnet.mount_forward_mm) comes within
+    # attach_gap_mm of a plow structure. FRONT-GATED: rear robot contact does
+    # not attach (M3: tail at ~1mm, no grab); the magnet swinging into reach
+    # does (M3b). The historical "190mm attraction radius" was a
+    # reference-point artifact: robot-CENTRE distances at attach moments
+    # ~= 66.5mm mount + near-contact gap + geometry. The 2026-08-19
+    # "statics don't predict pass-by dynamics" ruling DISSOLVES — statics
+    # and dynamics agree once measured magnet-point-to-structure.
+    attachment:
+      reference: magnet_point
+      structures:
+        blade:
+          rect_mm: {center: [158.9, 1317.9], width: 292, height: 106}  # viz-measured body
+          attach_gap_mm: 75          # bracketed [68, 82): M3b attach at 68 / M3c fail at 82;
+                                     # M1 fail at 97 was the outer cap
+        hitch:
+          point_mm: [163, 1169]      # the anchor: front-face contact reference point
+          attach_gap_mm: 40          # bracketed [31, 52): P3 attach at 31 / P7 fail at 52
+      marginal_band_mm: 15           # |clearance| <= band -> attachment_boundary_marginal
+                                     # (drift-scale honesty; WREN-C054 sits at -6.8)
+    plow_engagement:
+      anchor_position: [163, 1169]
+      magnet_attraction_radius: 190
+      notes: >
+        Attachment is estimated uniformly within the 190mm attraction radius
+        (the prior goal_strategy_detector work's empirically-verified
+        magnet_attraction_radius_mm, reconfirmed live 2026-08-19: WREN-C031
+        attached passing at ~171mm centre distance). Reviewer ruling
+        2026-08-19: no zone bands are modelled. History (FINDINGS.md): the
+        WREN-C007-variant "stuck zone" did not replicate (P5 attached) and the
+        P1/P2/P7 static below-anchor probes (no attach at 52-103mm
+        magnet-to-anchor) did not predict pass-by dynamics — C031 attached
+        below/at anchor level in motion. Simulations are estimations;
+        attachment is estimated within the tested radius.
+    approach_path_caveat: >
+      Debris extends toward the plow along leftward approach paths (y=825–1348
+      range, confirmed by bumper probing at x≈-483). Debris zone dwell time is
+      not a clean discriminator between navigate_to_plow and sweep_region for
+      students approaching the plow from negative x — the robot will contact
+      debris incidentally during navigation on this path.
+  castle_debris:
+    object_type: target
+    movable: true
+    x: -478                         # outer castle hex center x [M]
+    y: -73                          # outer castle hex center y [M]
+    tolerance: 1136                 # circumradius of outer castle hex — "within the debris field"
+    region_ref: debris_zone
+    aliases: ["debris", "castle blocks", "castles"]
+    notes: >
+      Castle pieces are physical simulated objects subject to physics engine.
+      Distribution changes during play as pieces are knocked around.
+      Debris zone description reflects approximate initial placement only.
+      x/y is the centroid of the outer castle hexagon (image-measured center -478.2, -72.6).
+      Tolerance 1136mm = outer hex circumradius; pg_sensing_optical_near_object returns True
+      when robot is within the outer castle wall extent.
+    disappears_off_island: true
+    # Individual castle pieces — sensing needs point targets, not the r=1136
+    # blob. Positions measured 2026-08-19 from data/screenshot_50mm/ (blob
+    # centroids, 4.66mm/px, validated: rock centroids agree with card rock
+    # positions to ~20mm). PROVISIONAL: colors are visual reads pending
+    # reviewer confirmation; the outer hex's ~6 gray vertex towers and the
+    # wall segments (gray outer hex, blue inner square) are NOT yet itemised —
+    # they connect into one blob under segmentation and need either finer
+    # measurement or reviewer-supplied geometry.
+    # body_radius_mm MEASURED 2026-08-19: equivalent-area circle radius from
+    # calibrated blob areas (4.66mm/px), +7% bias correction cross-validated
+    # against the rocks (blob 94/80/80 vs visual radii 100/85/85). ±10mm.
+    pieces:
+      outer_corner_block_w:  {x: -1249, y:  538, color: null,  body_radius_mm: 72}
+      outer_corner_block_sw: {x: -1275, y: -683, color: null,  body_radius_mm: 72}
+      # Castle-structure adoption (reviewer-ruled 2026-08-26; measured from
+      # data/screenshot_50mm/ against the 8 maroon control points, residuals
+      # <=1mm at 4.658mm/px): the outer hex's four GRAY VERTEX TOWERS and
+      # the east GATE. N/S centroids measured clean; NE/SE merge with wall
+      # segments under segmentation — placed at the structural post
+      # coordinates, PROVISIONAL ±60mm. r=100 matches the clean N/S reads.
+      outer_vertex_tower_n:  {x:  -470, y: 1028, color: null,  body_radius_mm: 100}
+      outer_vertex_tower_ne: {x:   506, y:  495, color: null,  body_radius_mm: 100}   # provisional
+      outer_vertex_tower_se: {x:   506, y: -641, color: null,  body_radius_mm: 100}   # provisional
+      outer_vertex_tower_s:  {x:  -468, y: -1154, color: null, body_radius_mm: 100}
+      castle_gate:           {x:   -30, y:  -74, color: null,  body_radius_mm: 94}
+      inner_corner_tower_nw: {x:  -850, y:  249, color: null,  body_radius_mm: 70}
+      inner_corner_tower_ne: {x:  -189, y:  233, color: null,  body_radius_mm: 70}
+      inner_corner_tower_sw: {x:  -845, y: -400, color: null,  body_radius_mm: 70}
+      inner_corner_tower_se: {x:  -193, y: -394, color: null,  body_radius_mm: 70}
+      courtyard_tower_1:     {x:  -712, y:   86, color: null,  body_radius_mm: 70}
+      courtyard_tower_2:     {x:  -375, y: -231, color: null,  body_radius_mm: 70}
+    pieces_provenance: >
+      Blob-centroid extraction 2026-08-19. Colors CONFIRMED UNREADABLE
+      (reviewer, 2026-08-19): only the red boundary line has a detectable
+      color; piece colors are not readable by the eye — ratifying the
+      WREN-C070 ground truth (its eye-detects-RED check never fired despite
+      close passes). The FRONT DISTANCE sensor DOES read these pieces
+      (reviewer confirmation — Phase 3 scope). All pieces movable, subject
+      to physics, disappear off-island.
+
+  # Rocks — movable physics obstacles on the eastern half of the field.
+  # Positions are initial placement only; rocks are dynamic rigid bodies.
+  # Tolerance = visual radius (diameter / 2) from image analysis.
+  rock_ne_large_1:
+    object_type: obstacle
+    movable: true
+    color: none                     # gray rock — provisional visual read
+    body_radius_mm: 100              # = tolerance: for rocks the tolerance IS the physical radius
+    disappears_off_island: true
+    x: 637                          # center_mm [M]
+    y: 700
+    tolerance: 100                  # visual radius (diameter 199mm / 2 ≈ 100)
+  rock_ne_large_2:
+    object_type: obstacle
+    movable: true
+    color: none                     # gray rock — provisional visual read
+    body_radius_mm: 85              # = tolerance: for rocks the tolerance IS the physical radius
+    disappears_off_island: true
+    x: 937                          # center_mm [M]
+    y: 690
+    tolerance: 85                   # visual radius (diameter 169mm / 2 ≈ 85)
+  rock_ne_small:
+    object_type: obstacle
+    movable: true
+    color: none                     # gray rock — provisional visual read
+    body_radius_mm: 53              # = tolerance: for rocks the tolerance IS the physical radius
+    disappears_off_island: true
+    x: 807                          # center_mm [M]
+    y: 512
+    tolerance: 53                   # visual radius (diameter 106mm / 2 ≈ 53)
+  rock_se:
+    object_type: obstacle
+    movable: true
+    color: none                     # gray rock — provisional visual read
+    body_radius_mm: 85              # = tolerance: for rocks the tolerance IS the physical radius
+    disappears_off_island: true
+    x: 605                          # center_mm [M]
+    y: -850
+    tolerance: 85                   # visual radius (diameter 169mm / 2 ≈ 85)
+
+# Castle structure vs fall area (reviewer distinction, 2026-08-26): the
+# structure is WHERE THE CASTLE STANDS (outer gray hex ring: 4 vertex
+# towers + 2 maroon corner blocks + wall segments; inner blue square:
+# 4 maroon corner towers, courtyard pieces, east gate). The debris_zone
+# region below is the FALL AREA around and including it. Documented
+# extents (image-measured):
+castle_structure:
+  outer_hex: {centroid_x: -478.2, centroid_y: -72.6, circumradius_mm: 1136}
+  inner_square: {x_min: -850, x_max: -189, y_min: -400, y_max: 249}
+
+regions:
+  castle_footprint:
+    # The structure's standing extent (outer-post AABB) — evidence/
+    # diagnostic region; NOT a coverage indicator target and NOT
+    # disturbs_world (debris_zone owns the staleness semantics).
+    region_type: structure_extent
+    x_min: -1462
+    x_max: 506
+    y_min: -1208
+    y_max: 1063
+  debris_zone:
+    region_type: approximate_initial_placement
+    # Reviewer physics (2026-08-24): entering this zone disrupts debris —
+    # pieces fall randomly, often in front of the robot, potentially out to
+    # the boundary. Once entered, the movable world has diverged from this
+    # card: subsequent sensor readings AND unfired-hat predictions are
+    # conditional (sensor_reading_stale).
+    disturbs_world: true
+    verified: false
+    # Bounding box for simulator region tracking (x_min/x_max/y_min/y_max required).
+    # Used for detecting robot entry and coverage — not for physical debris placement
+    # (which is dynamic).
+    # x_min=-1600: outer castle hex left posts at x≈-1462 + ~138mm buffer.
+    #   Original -1300 did not cover the leftmost castle walls.
+    # x_max=+650: outer castle hex right posts at x≈+506 + ~144mm buffer.
+    #   Original +300 did not cover the rightmost castle walls.
+    # y_min=-1400: outer castle hex bottom post at y≈-1208 + ~192mm buffer.
+    #   Original -1300 was already past the bottom post; expanded slightly more.
+    # y_max=+1300: outer castle hex top post at y≈+1063 + ~237mm buffer.
+    #   Unchanged — already extends well past the top post toward the plow.
+    # AABB bounding box — required for PlaygroundContext; also serves as polygon pre-reject
+    x_min: -1600
+    x_max: 650
+    y_min: -1400
+    y_max: 1300
+    # Convex polygon boundary: outer castle hex corner posts + 150mm outward buffer.
+    # Vertices ordered top → top_right → bottom_right → bottom → bottom_left → top_left
+    # (clockwise in y-up space, matching the cross-product sign convention in _point_in_convex_polygon).
+    # All 6 vertices verified to lie within the island inner hex boundary.
+    polygon_mm:
+      - [-478,  1213]   # top          (post -478,1063 + 150mm north)
+      - [ 635,   570]   # top_right    (post  506, 495 + 150mm outward)
+      - [ 635,  -716]   # bottom_right (post  506,-641 + 150mm outward)
+      - [-478, -1358]   # bottom       (post -478,-1208 + 150mm south)
+      - [-1592, -716]   # bottom_left  (post -1462,-641 + 150mm outward)
+      - [-1592,  570]   # top_left     (post -1462, 495 + 150mm outward)
+    coverage_fraction_caveat: >
+      The concentric castle structure (outer wall → moat → core) means the bounding
+      box includes substantial debris-free area (the moat gap and corners).
+      Coverage fraction calculated from bounding box area will systematically
+      underestimate actual debris contact rate. Use coverage fraction as a relative
+      measure and directional signal only, not an absolute estimate of debris cleared.
+    plow_approach_caveat: >
+      Debris extends toward the plow along leftward approach paths (y=825–1348 range,
+      confirmed by bumper probing at x≈-483). Debris zone dwell time is not a clean
+      discriminator between navigate_to_plow and sweep_region for students approaching
+      the plow from negative x — the robot will contact debris incidentally during
+      navigation on this path.
+    notes: >
+      Not a marked field region. Describes the area where castle debris is
+      present — initial placement plus scatter. Distribution shifts during play
+      due to simulated physics — pieces knocked toward moat fill it over time.
+      Treat all debris zone calculations as approximate.
+      Bounding box (x[-1600,650] y[-1400,1300]) is used by the simulator
+      for region entry detection and coverage tracking.
+    structure: concentric
+    primary_concentration: "left two quadrants (negative x)"
+    outer_wall:
+      approximate_x_right_extent: 300
+      notes: "Extends slightly into positive x territory"
+    core:
+      approximate_center_x: -500
+      approximate_center_y: 0
+    moat:
+      description: >
+        Empty ring between outer wall and core. Fills with debris during
+        play as pieces are knocked inward by physics simulation.
+    bumper_probe_observations:
+      - "At x≈-483 driving positive y: first contact y≈100, gap y≈300-800, contact resumes y≈825"
+      - "At x≈14 driving negative y: near-continuous contact from y=0 downward"
+      - "At y≈-500 driving negative x: contact x≈-186 to x≈-1261, gap x≈-1261 to x≈-1611"
+      - "At y≈0 driving negative x: sparse contact around x≈-1036"
+    previous_yaml_notes: >
+      Previous config specified debris_zone as x[-1200, 300] y[-1200, 1100].
+      Bounds were removed during 2026-04-07 YAML update when bounding box
+      approach was flagged as approximate — but removal broke the simulator's
+      region tracking entirely (PlaygroundContext skips regions without
+      x_min/x_max/y_min/y_max). Restored with slightly expanded bounds based
+      on bumper probing data.
+
+robot:
+  length_mm: 133
+  width_mm: 50.8
+  wheel_diameter_mm: 50
+  wheel_circumference_mm: 157.08
+  notes: >
+    Standard VR robot configuration confirmed via VEX API.
+    drivetrain.heading() does not update during movement —
+    do not use for orientation tracking in path reconstruction.
+
+spawn_points:
+  default_start:
+    x: 1014
+    y: 49
+    heading: 0
+    verified: true
+    notes: >
+      GPS reads (1014, 49-50) at spawn — ~1mm jitter in y observed.
+      Use tolerance window rather than exact equality for spawn detection.
+      Heading 0 faces negative X (toward field center), not positive Y
+      as previously documented.
+
+task_description: >
+  Students program a robot to clear scattered castle debris (objects) from a
+  hexagonal field. The primary goal is to push debris out of the field area.
+  An optional challenge is to first navigate to the plow object and activate
+  it (magnet on) before clearing — the plow increases clearing effectiveness.
+  Core phases: [optional] navigate to plow → [optional] engage plow →
+  clear debris area. Students who skip the plow can still clear debris
+  directly with the robot body.
+
+task_relevant_features:
+  - named_objects
+  - named_regions
+  - boundary_constraints
+  - magnet_activation
+  - island_field
+  - boundary_safety
+  - simulated_physics
+  - dynamic_debris_distribution
+
+distance_defaults:
+  target_reached_threshold: 50
+  progress_threshold: 25
+
+sensors:
+  location:
+    type: GPS
+    api: location.position(X, MM) / location.position(Y, MM)
+    notes: "Confirmed working. ~1mm jitter observed in y at spawn."
+  down_eye:
+    type: EyeSensor
+    api: down_eye.detect(RED)
+    notes: "Confirmed working for red border detection."
+    # Hardware spec (forward_offset_mm: 35, calibrated 2026-08-18 from
+    # data/screenshot_drivetillred/: drive-until-red stopped with robot CENTRE
+    # 35mm inside the detection line, nose 25mm onto the ring) MIGRATED to
+    # configs/robot/vr_robot.yaml (reviewer ruling 2026-08-19: sensor hardware
+    # is a robot property). detect(RED) fires when (centre + forward_offset
+    # along heading) crosses the inner detection polygon.
+    red_ring_boundary:
+      description: >
+        The island field has a visible red/orange ring border near the outer perimeter.
+        down_eye.detect(RED) returns True when the robot's downward eye sensor passes
+        over this ring. The ring is inset slightly from the field boundary (field_radius=1556mm)
+        and acts as an early-warning boundary signal before the robot exits the field.
+      trigger_zone: >
+        Approximately 1300–1500mm from field center. A robot traveling from spawn (1014, 50)
+        toward the left wall will cross the red ring before reaching the debris zone left
+        edge (-1300mm) and well before the field boundary (-1711mm).
+      strategic_use: >
+        Sensor-reactive sweep strategies use the red ring as a reactive turn trigger:
+          forever: if down_eye.detect(RED) → stop → turn N degrees → drive forward
+        This creates a systematic coverage pattern without explicit distance programming.
+        The turn angle determines the coverage shape:
+          ~180°  → back-and-forth passes (serpentine)
+          ~90°   → right-angle grid pattern
+          ~45°   → diagonal/spiral coverage
+      simulation_limitation: >
+        The simulator conservatively executes ALL if-branches regardless of sensor state.
+        A sensor-reactive forever loop is treated as 20 unrolled iterations of the branch body,
+        not as conditional execution. This means a correctly-structured sensor sweep produces
+        the same simulation path evidence as a non-conditional loop.
+  front_eye:
+    type: EyeSensor
+    notes: "Available but did not reliably detect red border in probing."
+  left_bumper:
+    type: Bumper
+    api: left_bumper.pressed()
+    notes: "Confirmed working. Use pressed() not pressing()."
+  right_bumper:
+    type: Bumper
+    api: right_bumper.pressed()
+    notes: "Confirmed working. Use pressed() not pressing()."
+  front_distance:
+    type: Distance
+    notes: "Available, not yet probed."
+  magnet:
+    type: Electromagnet
+    notes: "Available. Magnet activation is key indicator for engage_plow goal."
+
+outcome_metrics:
+  weight_cleared:
+    units: kg
+    max_value: 8100
+    notes: "Maximum possible weight cleared is 8100 kg (all debris cleared)."
+  elapsedtime:
+    units: seconds
+  difficulty_level:
+    units: integer
+  final_gps_position:
+    units: mm
+    # vex_goal_profiles addition (task 3 §3b): which playground_params fields carry
+    # the real run's final GPS position, for the gps_final_error_mm fidelity metric.
+    x_field: gps_x_position
+    y_field: gps_y_position
+
+segmentation:
+  method: evidence_profile
+  window_unit: simulated_step
+  window_size: 5
+  window_stride: 1
+
+  # Adaptive window growth: when enabled, if no real segment boundary is confirmed
+  # at the base window_size, the window grows by `step` and the evidence pass is
+  # retried — up to max_window_size. Useful when the first goal phase is briefer
+  # than confirmation_windows × window_stride steps.
+  # NOTE: windowing has known limitations for loop-heavy programs where the same
+  # behaviour repeats throughout all windows; flagged for architectural revisit.
+  adaptive_window:
+    enabled: true
+    max_window_size: 15
+    step: 2
+
+  evidence_scale:
+    strong_positive: 2.0
+    moderate_positive: 1.5
+    weak_positive: 1.0
+    neutral: 0.0
+    weak_negative: -1.0
+    strong_negative: -2.0
+
+  thresholds:
+    minimum_support: 2.0
+    relative_margin: 1.5
+    confirmation_windows: 3
+    exit_support_threshold: 1.0
+    min_segment_windows: 3
+    max_boundary_lookback_windows: 2
+
+  uncertainty:
+    allow_uncertain_segments: true
+    uncertain_margin: 0.75
+    minimum_confidence_for_label: 0.60
+
+  smoothing:
+    use_exponential_smoothing: false
+    alpha: 0.40
+
+  diagnostics:
+    save_rolling_evidence: true
+    save_boundary_decisions: true
+
+# Landmark definitions for structure-primary segmentation.
+# Each landmark fires when its condition is met within an ExecutionChunk.
+# "direct" hits create segment boundaries; "pre_setup" hits record evidence only.
+landmarks:
+  # navigate_to_plow: robot approaches plow zone
+  - id: plow_approach_zone
+    type: point_proximity
+    object_id: plow
+    radius_mm: 400
+    goal_achieved: navigate_to_plow
+
+  - id: plow_close_zone
+    type: point_proximity
+    object_id: plow
+    radius_mm: 250
+    goal_achieved: navigate_to_plow
+
+  # engage_plow: magnet fires near the plow (direct) or pre-activated before arrival (pre_setup)
+  - id: engage_plow_action
+    type: conditional_proximity
+    object_id: plow
+    engage_radius_mm: 300
+    pre_setup_radius_mm: 500
+    goal_achieved: engage_plow
+
+  # sweep_region: robot dwells in debris zone
+  - id: debris_zone_sweep
+    type: zone_duration
+    region_id: debris_zone
+    min_steps: 5
+    goal_achieved: sweep_region
+
+landmark_scoring:
+  conditional_body_confidence_modifier: 0.7
+  pre_setup_evidence_weight: 0.5
+  # Backward approach propagation: when a landmark fires (robot reaches a goal zone),
+  # extend that goal label backward to preceding generic_exploration chunks if the
+  # rolling-window evidence for that goal in those chunks meets this threshold.
+  # Uses the reliability_weighted_score from the rolling evidence pass (same scale as
+  # evidence_scale below: weak=1.0, moderate=1.5, strong=2.0).
+  # Lower than minimum_support (2.0) — we only need directional signal, not confirmation.
+  # Set to 0 to propagate to any chunk with net-positive evidence; null/absent to disable.
+  backward_propagation_min_score: 0.5
+
+goal_transitions:
+  navigate_to_plow:
+    expected_successors: [engage_plow, sweep_region, generic_exploration]
+    possible_successors: [navigate_to_plow]
+  engage_plow:
+    expected_successors: [sweep_region, generic_exploration]
+    possible_successors: [navigate_to_plow]
+  sweep_region:
+    expected_successors: [generic_exploration]
+    possible_successors: [navigate_to_plow, engage_plow]
+  generic_exploration:
+    expected_successors: [navigate_to_plow, sweep_region, engage_plow, generic_exploration]
+    possible_successors: []
+  unclear_goalstate:
+    expected_successors: []
+    possible_successors: []
+
+verification_log:
+  - date: "2026-04-07"
+    method: "GPS probing via VEXcode VR Python + simulator unit tests"
+    confirmed:
+      - "Spawn coordinates (1014, 49)"
+      - "Heading 0° = negative X (West = math heading 180°)"
+      - "turn_for(RIGHT) = clockwise in math = heading decreases"
+      - "turn_for(LEFT) = counter-clockwise in math = heading increases"
+      - "Simulator fix: spawn_heading = (180 - card_heading) % 360"
+      - "Simulator fix validated: zero delta on all positional probes"
+      - "Left field boundary: x≈-1711 (flat vertical edge)"
+      - "Right field boundary: x≈1614"
+      - "Top extent: y≈1766 near x=0"
+      - "Bottom extent: y≈-1867 near x=0"
+      - "Top-right boundary: y≈1274 at x≈1013"
+      - "Bottom-right boundary: y≈-1275 at x≈1013"
+      - "Top-left boundary: y≈1599 at x≈-483"
+      - "Plow x=163 confirmed (documented 164 — within 1mm)"
+      - "Plow y=1348 corrected (was documented as 1300)"
+      - "down_eye.detect(RED) confirmed for border detection"
+      - "left_bumper.pressed() / right_bumper.pressed() confirmed"
+      - "drivetrain.heading() does not update — do not use"
+    pending:
+      - "Plow exact center y — robot may have stopped at object edge"
+      - "Top-left and bottom-left hex corner coordinates"
+      - "Bottom-left boundary point at x≈-483"
+
+notes:
+  - "Field boundary probed 2026-04-07 — substantially different from previous circumscribed square assumption."
+  - "Left edge confirmed flat at x≈-1711, wider than previous x_min of -1644."
+  - "Bottom extent (-1867) larger than top (1766) — field may be slightly off-center vertically or asymmetric."
+  - "drivetrain.heading() unreliable — do not use in path reconstruction scripts."
+  - "Debris zone is dynamic — treat all debris calculations as approximate."
+  - "Plow position still requires GPS verification."
+  - "Robot y jitter of ~1mm observed — use tolerance windows not exact equality."
+
+# ── Visualization geometry ──────────────────────────────────────────────────
+# All values in mm_yaml coordinates (origin offset so spawn = (1014, 49)).
+# Measured from top-down screenshots using a 50mm robot step for calibration.
+# Status: M=measured from image, V=verified by probing, D=derived, A=approximate.
+# Source: design_instructions/claude_castlecrasher_viz/castle_crashers_reconstruction.md
+visualization_geometry:
+  source: "Image analysis calibrated by 50mm robot step; mm/px = 6.6414"
+
+  island:
+    # Outer edge of the hexagonal island (outer edge of red boundary ring)
+    outer_hex_vertices_mm:
+      top:          [-20.4,  2035.2]   # M
+      top_right:    [1739.6, 1012.4]   # M
+      bottom_right: [1739.6, -1019.8]  # M
+      bottom:       [-13.7, -2036.0]   # M
+      bottom_left:  [-1787.0, -1013.2] # M
+      top_left:     [-1787.0,  1012.4] # M
+    # Inner edge of red ring — where down_eye.detect(RED) fires
+    inner_hex_vertices_mm:
+      top:          [-23.7,  1942.2]   # M
+      top_right:    [1659.9,  972.6]   # M
+      bottom_right: [1659.9, -967.3]   # M
+      bottom:       [-30.4, -1942.8]   # M
+      bottom_left:  [-1707.3, -973.9]  # M
+      top_left:     [-1707.3,  972.6]  # M
+    red_ring_width_mm: 80              # M (perpendicular at flat side)
+
+  castle:
+    # Outer hexagonal wall surrounding the castle structure
+    outer_hex:
+      center_mm: [-478.2, -72.6]       # M
+      circumradius_mm: 1136            # M (center to corner post)
+      apothem_mm: 984                  # M (center to wall midpoint)
+      wall_thickness_mm: 93            # M (estimated)
+      corner_posts_mm:                 # M
+        bottom:       [-478.2, -1208.4]
+        bottom_left:  [-1461.8,  -640.5]
+        top_left:     [-1461.8,   495.3]
+        top:          [-478.2,  1063.2]
+        top_right:    [505.5,   495.3]
+        bottom_right: [505.5,  -640.5]
+    # Inner castle: axis-aligned square moat + core
+    inner_castle:
+      center_mm: [-581.5, -80.1]       # M
+      moat:
+        outer_bbox_mm:
+          tl: [-817.3,  155.7]         # M (top-left corner)
+          br: [-345.8, -315.8]         # M (bottom-right corner)
+        thickness_mm:
+          left: 139.5                  # M
+          right: 119.5                 # M (thinner — drawbridge side)
+          top: 132.8                   # M
+          bottom: 132.8                # M
+        red_corner_posts_mm:           # M (4 red cubes at moat outer corners)
+          tl: [-817.3,  155.7]
+          tr: [-345.8,  155.7]
+          bl: [-817.3, -315.8]
+          br: [-345.8, -315.8]
+      core:
+        bbox_mm:
+          tl: [-677.9,   22.9]         # M
+          br: [-465.4, -183.0]         # M
+      drawbridge:
+        side: east
+        anchor_mm: [-345.8, -80.0]     # D
+        approx_length_mm: 150          # A
+        approx_width_mm: 80            # A
+
+  rocks:
+    # Dynamic rigid bodies — positions are initial placement only
+    - id: ne_large_1
+      center_mm: [636.6, 700.1]        # M
+      diameter_mm: 199                 # M (visual silhouette)
+    - id: ne_large_2
+      center_mm: [936.5, 689.9]        # M
+      diameter_mm: 169                 # M
+    - id: ne_small
+      center_mm: [806.7, 511.9]        # M
+      diameter_mm: 106                 # M
+    - id: se_single
+      center_mm: [605.4, -850.3]       # M
+      diameter_mm: 169                 # M
+
+  plow_body:
+    # Image-measured geometric center of the plow body (distinct from YAML anchor)
+    # YAML anchor (163, 1169) = robot GPS reading at front face of plow
+    # Body center is ~149mm north of the anchor
+    center_mm: [158.9, 1317.9]         # M
+    width_mm: 292                      # M
+    height_mm: 106                     # M
+# --- vex_goal_profiles addition (task spec §5): the only edit relative to the
+# --- VEX_model_tracing source card. Block types are named here and only here —
+# --- never in Python. Lists match the vendored blocks.csv classification.
+# --- vex_goal_profiles addition (reviewer decision 2026-08-18): sessions whose
+# --- playground_params lack this field were run on a DIFFERENT playground —
+# --- their params (and GPS) were never produced by this code. Corpus loaders
+# --- exclude them from the testing set. Overrides task-1 §13 "do not drop".
+corpus_filter:
+  required_outcome_field: weight_cleared
+  # Positive router (Stage 0, 2026-08-21): the run dataset carries the
+  # playgroundData blob's self-ID — the platform's LITERAL misspelling,
+  # match exactly. Preferred over field-presence when available;
+  # required_outcome_field remains the fallback for session-level corpora.
+  playground_self_id: CasteCrasherPlus
+
+block_families:
+  magnet: [pg_magnet_set_magnet_state]
+  movement: [pg_drivetrain_drive, pg_drivetrain_drive_for, pg_drivetrain_turn,
+             pg_drivetrain_turn_for, pg_drivetrain_turn_to_heading, pg_drivetrain_turn_to_rotation]
+  drive: [pg_drivetrain_drive, pg_drivetrain_drive_for]
+  turn: [pg_drivetrain_turn, pg_drivetrain_turn_for, pg_drivetrain_turn_to_heading,
+         pg_drivetrain_turn_to_rotation]

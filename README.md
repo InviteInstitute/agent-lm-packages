@@ -2,11 +2,11 @@
 
 Three small, **pure** Python packages that turn a VEX (VEXcode VR) student's block event
 stream into things an agent can act on: the current workspace, behavioral triggers, and
-(later) a goal/strategy layer. No database, no web framework. Each package takes plain
+goal evidence with explicit uncertainty. No database, no web framework. Each package takes plain
 data in and returns plain data back, so any host (reflecks, the agent server, a notebook)
 can drive them.
 
-Each folder has its own README. Install both with `pip install .` from the repo root.
+Each folder has its own README. Install all three with `pip install .` from the repo root.
 
 ## The three packages
 
@@ -14,7 +14,7 @@ Each folder has its own README. Install both with `pip install .` from the repo 
 |---|---|---|---|
 | [`log_parser_delta_engine/`](log_parser_delta_engine/) | Replay a log stream (or one project XML) into the current VEX workspace and render it as pseudo-code (compact + readable). | stdlib | populated |
 | [`learner_models/`](learner_models/) | Per-run edit distances (APTED), the 5 behavioral triggers, and session episodes. | `apted` | populated |
-| [`goal_strategy/`](goal_strategy/) | The pedagogy layer (goal + feedback strategy). | none yet | empty placeholder |
+| [`goal_strategy/`](goal_strategy/) | Goal profiles, simulation, timelines, sensor battery and optional review tools. | `pyyaml`; analysis/UI extras | populated |
 
 ## How they fit together
 
@@ -30,7 +30,9 @@ flowchart LR
     F --> G["triggers (5)"]
     G --> H["episodes<br/><i>what is the student doing?</i>"]
 
-    G --> I["goal_strategy (future)<br/>pick feedback / goal"]
+    A --> I["goal_strategy<br/>goal evidence per run"]
+    I --> J["host joins evidence by run index"]
+    G --> J
 ```
 
 ## Two workspace renderers
@@ -52,7 +54,7 @@ Use **compact** when building an LLM prompt (spend tokens on structure, not pros
 
 ## Data contract (what you feed in)
 
-Both live packages read the same parsed VEX log event, a dict with three keys:
+The integration APIs read the same parsed VEX log event, a dict with three keys:
 
 ```python
 {"event_type": "runProject",        # str,   the VEX eventType
@@ -75,12 +77,14 @@ touches a DB. The one stateful trigger, `inactive`, leaves its two DB touch-poin
 caller. See [`learner_models/README.md`](learner_models/README.md).
 
 There's a runnable walkthrough in [`examples/end_to_end.py`](examples/end_to_end.py)
-that feeds one event stream through both packages.
+that feeds synthetic event streams through all three packages. Goal evidence does not select feedback or change learner-model triggers.
 
 ## Install / test
 
 ```bash
-pip install .                            # installs both packages (pulls in apted)
-python test_smoke.py                     # 40 tests across both packages
+pip install .                            # Python 3.10+, all three core packages
+python test_smoke.py                     # original 40 sibling-package tests
 python examples/end_to_end.py            # narrated walkthrough with real output
 ```
+
+Install `.[dev]` and run `python -m pytest -q -m "not corpus"` for standalone goal validation. See [goal_strategy/README.md](goal_strategy/README.md) for associated-outcome APIs, optional tools, external data paths, and full-corpus qualification.

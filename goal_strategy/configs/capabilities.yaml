@@ -1,0 +1,144 @@
+# Simulation capability registry — D2 layer 1 (ruled 2026-08-21).
+#
+# OUR simulator's per-block-type capability, TRANSFERABLE across playgrounds
+# (VEX VR blocks behave consistently across playgrounds; what varies per
+# playground is the robot model's block availability — robot card — and the
+# world's simulability properties — playground card). Hashed into
+# config_version. The vendored blocks.csv is upstream's classification and
+# stays pristine; its simulator_status column describes the SOURCE project's
+# simulator, not ours (e.g. it marks distance_found "ignored" — we model it).
+#
+# Classes (PIPELINE_DATAFLOW Stage 1):
+#   simulates        — runs faithfully (incl. faithful no-ops: pen/print/
+#                      comments touch nothing the robot or goals can see)
+#   simulates_capped — runs under a declared cap (loop unroll 20 per level +
+#                      the global 50k-block execution budget, Stage-1 2026-08-21)
+#   testable         — simulable under assumptions worth probing (known
+#                      defects/approximations documented per entry)
+#   unsimulable      — no model; presence degrades the sim channel and sets
+#                      the entry's flag
+#
+# unknown_default governs types not listed anywhere: never a crash, always
+# a named flag. Population source: the Stage-1 census over the ccp_run
+# dataset (70 observed types) + the dev corpus; incidence noted where it
+# drove a decision.
+registry_id: simulation_capabilities
+version: 1
+
+unknown_default:
+  class: unsimulable
+  flag: unmodeled_blocks
+
+# Prefix rules — most-specific explicit entry below wins over a family rule.
+families:
+  pg_drivetrain_: {class: simulates}
+  pg_magnet_: {class: simulates}
+  pg_variables_: {class: simulates}
+  pg_operator_: {class: simulates}       # expression evaluator coverage
+  pg_looks_: {class: simulates, note: faithful no-op — pen/console state is
+      invisible to robot motion, sensors, and every goal indicator}
+  math_: {class: simulates, kind: value}
+  comment_: {class: simulates, kind: inert}
+
+blocks:
+  # ── events / hats ──
+  pg_events_when_started: {class: simulates}
+  pg_events_when_broadcasted: {class: simulates,
+      note: exact for single receivers; standing flags cover concurrency}
+  pg_events_broadcast: {class: simulates}
+  pg_events_broadcast_and_wait: {class: simulates}
+  pg_events_optical_detect_object: {class: simulates,
+      note: measured eye model (OI-5); EDGE-TRIGGERED RE-ARMING (reviewer
+        ruling 2026-08-24 — the real runtime re-runs the hat on every new
+        detection event; re-fires on condition re-entry, one edge while
+        continuously true), mid-move transition latching. Physics-coupled
+        re-triggering off knocked pieces is unreconstructable — the
+        detection_physics fidelity lane attributes those endpoints.}
+  pg_events_when_bumper: {class: simulates,
+      note: contact model, measured radii (OI-6 retired); edge-triggered
+        re-arming semantics (2026-08-24, same as the eye hat)}
+  pg_events_when_timer: {class: simulates,
+      note: MODELED (OI-23 build 2026-08-24) — defers on the simulated
+        clock (calibrated velocities; movement now consumes time, fixing
+        the timer_value defect); fires between blocks once the resettable
+        timer crosses the threshold (monotonic — at most one block late).
+        timer_hat_unfired flags programs whose stacks end before the
+        threshold (whether the real project stays open is not modelled).}
+
+  # ── control ──
+  pg_control_wait: {class: simulates}
+  pg_control_wait_until: {class: simulates, note: gate semantics (OI-3 ratified)}
+  pg_control_if_then: {class: simulates}
+  pg_control_if_then_else: {class: simulates}
+  pg_control_if_elseif_else: {class: simulates}
+  pg_control_forever: {class: simulates_capped}
+  pg_control_repeat: {class: simulates_capped}
+  pg_control_repeat_until: {class: simulates_capped}
+  pg_control_while: {class: simulates_capped}
+  pg_control_break: {class: simulates}
+  pg_control_stop_project: {class: simulates}
+
+  # ── sensing reporters ──
+  pg_sensing_optical_color: {class: simulates, note: measured (OI-10/OI-18)}
+  pg_sensing_optical_near_object: {class: simulates, note: measured (OI-5)}
+  pg_sensing_optical_detected_color_is: {class: simulates}
+  pg_sensing_optical_brightness: {class: unsimulable, flag: unmodeled_blocks,
+      note: ruled NOT worth modeling (reviewer 2026-08-24) — in
+        CastleCrashersPlus this block is INVALID (foreign-playground code)
+        and produces no behavior; the robot card's available_blocks
+        unavailable list preempts this entry there, flagging
+        foreign_playground_block with faithful no-op semantics. This
+        capability entry only matters for playgrounds where brightness IS
+        available. Incidence 27 runs / 1 student (CROW-C105).}
+  pg_sensing_distance_found: {class: simulates, note: docs-verified banded cone}
+  pg_sensing_distance_distance: {class: simulates}
+  pg_sensing_bumper: {class: simulates, note: reporter variant of the contact model}
+  pg_sensing_bumper_pressed: {class: simulates}
+  pg_sensing_position: {class: simulates,
+      note: A3 closed 2026-08-26 (review-corrected) — live pose, UNITS
+        honoured (mm/inches)}
+  pg_sensing_position_angle: {class: simulates,
+      note: VEX/card heading convention (review-corrected 2026-08-26)}
+  pg_sensing_drive_heading: {class: simulates,
+      note: VEX/card heading convention (review-corrected 2026-08-26)}
+  pg_sensing_drive_rotation: {class: simulates,
+      note: A3 rotation build 2026-08-26 — true cumulative rotation
+        accumulator (CW+, 0 at spawn); retires the registry's last
+        testable class}
+  pg_sensing_timer_value: {class: simulates,
+      note: movement-time defect FIXED (OI-23 build 2026-08-24) — drives,
+        turn-for, and wait_until marches consume clock time at the
+        calibrated velocities; turn-to-heading/rotation deltas still don't
+        (documented approximation, zero co-incidence with timer use).}
+  pg_sensing_reset_timer: {class: simulates}
+
+  # ── procedures — the Stage-1 silent-wrongness find ──
+  procedures_definition: {class: simulates,
+      note: MODELED (OI-23 build 2026-08-24) — parses as an orphan stack;
+        its prototype's mutation carries proccode; the body (the
+        definition's next-chain) executes only via calls.}
+  procedures_call: {class: simulates,
+      note: MODELED (OI-23 build 2026-08-24) — inline synchronous
+        execution of the named definition's body (a stall or forever
+        inside the body faithfully affects the caller). Recursive calls
+        are suppressed with procedure_recursion_suppressed; calls to a
+        missing definition no-op with procedure_undefined.}
+  procedures_prototype: {class: simulates, kind: inert}
+
+  # ── structural / leaves ──
+  text: {class: simulates, kind: value}
+  broadcast_msg: {class: simulates, kind: value}
+  colour_picker_rgb: {class: simulates, kind: value}
+  operator_comparison: {class: simulates, kind: value,
+      note: non-pg leaf variant observed once}
+  aim_other_comment: {class: simulates, kind: inert}
+  pg_other_comment: {class: simulates, kind: inert}
+  pg_mixed_multiline_command: {class: unsimulable, flag: switch_syntax_error,
+      rejects_program: true,
+      note: Switch-mode free-text block. Reviewer probe 2026-08-24 —
+        invalid Switch text makes VEX error IMMEDIATELY and execute NO code
+        at all; faithful model is whole-program rejection (sim channel
+        abstains with this flag as the reason; code channel unaffected).
+        Parsing VALID Switch text needs a Python-ish parser — revisit if
+        valid Switch usage ever appears (corpus incidence 1 run, English
+        prose, CROW-C072).}

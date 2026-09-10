@@ -1,0 +1,18 @@
+# Scenario 1: single piece dead ahead of spawn (easiest acquisition).
+# Empty island + one piece; kinematic push (reviewer: assume the most
+# favorable condition); loop caps raised so looping clearers can finish.
+scenario_id: piece_ahead
+description: One piece directly ahead of the spawn heading.
+goal: clear_debris_zone
+testcase_physics: {push_model: kinematic, loop_unroll: 60}
+# Option A (reviewer-approved 2026-08-19): placement is RELATIVE to the
+# robot's pose when the tested construct first fires (bearing CCW+ deg
+# from heading). One battery variant runs per sensing construct.
+pieces:
+  test_piece: {relative: {ahead_mm: 600, bearing_deg: 0}, body_radius_mm: 55}
+checks:
+  - {name: detects,      rule: behavioral_divergence, divergence_mm: 100, facet: object_detection}
+  - {name: navigates_to, rule: min_distance, requires: detects, within_mm: 180, facet: object_pursuit,
+     progress_annotation: could_reach_if_run}
+  - {name: pushes_off,   rule: pieces_cleared, requires: detects, count: 1, facet: push_execution,
+     progress_annotation: could_clear_if_run}

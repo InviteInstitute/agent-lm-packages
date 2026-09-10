@@ -1,0 +1,144 @@
+# VEX VR Robot — sensor hardware card.
+#
+# Robot property, shared across playgrounds (reviewer ruling 2026-08-19,
+# following the block-labels precedent: hardware belongs to the robot/block
+# set, not to any one playground). Playground cards declare only what is
+# detectable there (object colors, 3D presence, color zones / red ring).
+#
+# Body dimensions (length_mm/width_mm) currently remain in each playground
+# card's robot: section because the vendored PlaygroundContext reads them
+# there; migrating them is a later, separate change.
+#
+# `assumed: true` marks docs-derived guesses pending calibration/ratification.
+robot_id: vr_robot
+version: 1
+
+# D2 layer 2 (ruled 2026-08-21): the block set AVAILABLE on this robot model.
+# Playgrounds using a different robot model (no magnet, different sensors)
+# would carry a different card with a different set. A block appearing in
+# code but OUTSIDE its model's set is an ANOMALY signal (foreign starter
+# code — cf. the two Coral-Reef-template sessions), not a capability
+# question (capability = configs/capabilities.yaml, transferable).
+# Provenance: derived from the Spring26 full-sample census (70 observed
+# types, 2026-08-21) + VEX VR docs; families as prefixes.
+available_blocks:
+  families: [pg_drivetrain_, pg_magnet_, pg_sensing_, pg_events_,
+             pg_control_, pg_operator_, pg_variables_, pg_looks_,
+             math_, comment_, procedures_, text, broadcast_msg,
+             aim_other_comment, pg_other_comment, operator_comparison,
+             colour_picker_rgb, pg_mixed_multiline_command]
+  # Blocks INVALID for this robot configuration in this playground family
+  # (reviewer probe 2026-08-24: brightness is not a valid block in
+  # CastleCrashersPlus — the code RUNS but the block produces no behavior).
+  # A program using one gets `foreign_playground_block` (foreign starter
+  # code transferred from another playground); our no-op simulation of it
+  # is FAITHFUL, and the reporter reads 0/false in conditions.
+  unavailable: [pg_sensing_optical_brightness]
+  notes: >
+    The VR robot in CastleCrasherPlus carries drivetrain, magnet, two eye
+    sensors, distance, bumpers, location, timer — the full observed block
+    set is available except the entries in `unavailable`. This card section
+    becomes discriminating when a second robot model enters the corpus.
+
+location:
+  # Built-in Location Sensor (GPS): reports (X, Y) of the robot's CENTER
+  # TURNING POINT (also the pen position), and a compass-style location
+  # angle 0-359.9 deg. [VEX docs via reviewer, 2026-08-19]
+  reference_point: center_turning_point
+  angle_range_deg: [0, 359.9]
+
+sensors:
+  down_eye:
+    facing: down
+    forward_offset_mm: 35          # calibrated 2026-08-18 (screenshot_drivetillred;
+                                   # migrated from castle_crashers.yaml sensors section)
+    calibrated: true
+    floor_tuned: true              # tuned to NOT detect the playground floor as an
+                                   # object; 2D color zones and 3D objects under the
+                                   # eye DO register [VEX docs via reviewer]
+    detects: [color_zones, objects_under_eye]
+    colors: [red, green, blue, none]
+
+  front_eye:
+    facing: forward
+    mount_forward_mm: 66.5         # front face of the 133mm body
+    fov_deg: 13                    # MEASURED 2026-08-21 (OI-5 probe, reviewer-run).
+                                   # Statistically compatible (+-~4deg) with the
+                                   # 10deg near-band aperture VEX documents for
+                                   # the front DISTANCE sensor — plausibly the
+                                   # same optics family. Card carries the
+                                   # measured value, not the sibling's spec
+                                   # (reviewer-reviewed 2026-08-21). What
+                                   # distinguishes the eye is the short TRIGGER
+                                   # range below, not the aperture.
+    range_mm: 124                  # MEASURED 2026-08-21. "Near object" is a SHORT-
+                                   # RANGE PROXIMITY DETECTOR, not a long cone.
+                                   # Probe A (back-away flip at rock_ne_small,
+                                   # station x=806): detection dropped at eye-to-
+                                   # surface 123.5mm — 8x shorter than the prior
+                                   # 1000mm docs-analogy assumption. Probe B
+                                   # (in-place sweeps at eye-to-surface 80mm and
+                                   # 40mm, two instruments, replicated): detection
+                                   # windows 41deg/44deg; fitted against the sim's
+                                   # exact cone predicate (any-part, linearized
+                                   # spread, along-axis surface range) -> fov
+                                   # 13.0deg, rms 2.6deg ~= integer-degree print
+                                   # quantization. Turn-latency fit 0.0deg.
+                                   # Fit notes: (a) all model classes independently
+                                   # place rock_ne_small ~10mm west of its card x
+                                   # (within its +-10-20mm blob-centroid stated
+                                   # uncertainty; rock card NOT changed — see
+                                   # FINDINGS); (b) fov/effective-radius degeneracy
+                                   # on 4 exits: (fov 13, physical radii) ~=
+                                   # (fov 30, radii x0.7) — behaviorally identical
+                                   # at corpus scales; card takes the parsimonious
+                                   # member (physical radii). Prior C042 "fires
+                                   # early" anchor is REINTERPRETED: the hat fires
+                                   # on close pass (~190mm center distance), not at
+                                   # 825mm — corpus attribution 2026-08-21.
+    detects: [objects, object_colors]
+    colors: [red, green, blue, none]
+
+  front_distance:
+    facing: forward
+    mount_forward_mm: 66.5
+    range_mm: 2000                 # MEASURED 2026-08-26 (OI-25 back-away probe
+                                   # at rock_se: found TRUE at 1,922mm, FALSE at
+                                   # ~2,022mm — flip 1,972±50mm; the docs' 3m
+                                   # figure repeated the OI-5 docs-vs-measured
+                                   # failure mode). Castle structure confirmed
+                                   # detectable close-range (dead-on TRUE).
+    fov_bands:                     # cone narrows with range — VEX docs; the
+                                   # 2-3m band never fires (measured) and is
+                                   # removed. Angular acceptance kept as-is
+                                   # (reviewer 2026-08-26: prior window test
+                                   # sufficient, no precision model needed) —
+                                   # caveat: model hits within ~1.5 deg of the
+                                   # cone edge are aim-marginal in reality
+                                   # (the C094 fan: three edge-margin hits,
+                                   # zero real fires).
+      - {max_mm: 1000, fov_deg: 10}
+      - {max_mm: 2000, fov_deg: 5}
+    reports: nearest_object_surface_distance
+    no_object_reading_mm: 3000     # MEASURED 2026-08-26: reporter prints
+                                   # exactly 3000.000 when found is false;
+                                   # found and the reporter share one bound.
+
+  bumpers:
+    # Switch semantics: value 1 / true while pressed, 0 / false when released.
+    # Pressed when the bumper point is in contact with an object body.
+    # Mount points: front corners of the 133 x 50.8mm body.
+    # assumed dropped 2026-08-19: body radii MEASURED (blob areas, rock
+    # cross-validation) — contact geometry is now fully measured.
+    left_bumper:  {mount: front_left,  mount_forward_mm: 66.5, mount_lateral_mm: 25.4}
+    right_bumper: {mount: front_right, mount_forward_mm: 66.5, mount_lateral_mm: -25.4}
+    contact_face: front
+
+  magnet:
+    mount: front
+    mount_forward_mm: 66.5         # front face of the 133mm body. Attachment is
+                                   # evaluated at THIS point (OI-21 probe series
+                                   # 2026-08-21: rear contact does not attach —
+                                   # M3; the magnet point swinging within reach
+                                   # does — M3b). Near-contact gaps live in the
+                                   # playground card's plow.attachment block.
