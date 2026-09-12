@@ -3,8 +3,11 @@ from __future__ import annotations
 
 import copy
 import functools
+import hashlib
 import json
 import math
+import os
+from collections import OrderedDict
 
 from .config import ConfigError, configs_root, load_configs, register_config_cache_clearer
 from .execution import prepare_execution
@@ -94,7 +97,69 @@ def _params(value, canonical, end_status, diagnostics):
     return params
 
 
+# Content-addressed result cache. program_id is a pure label (it flows only into
+# output fields, never into parsing/simulation/scoring), so the profile is a
+# deterministic function of everything BELOW keyed here; identical re-runs
+# (wheel-spinning) hit, and program_id is re-stamped per call. The key omits
+# program_id and includes the config source + conditional-hat treatment, and the
+# cache is dropped by load_configs.cache_clear() so in-place card edits stay honest.
+_RESULT_CACHE: "OrderedDict[tuple, dict]" = OrderedDict()
+_RESULT_CACHE_MAX = 256
+
+
+def _result_cache_clear():
+    _RESULT_CACHE.clear()
+
+
+register_config_cache_clearer(_result_cache_clear)
+
+
+def _restamp_program_id(obj, program_id):
+    """Overwrite every 'program_id' field in a cached result copy with this
+    call's id. Robust to nesting (profile, battery, timeline all embed it)."""
+    if isinstance(obj, dict):
+        for key, value in obj.items():
+            if key == 'program_id':
+                obj[key] = program_id
+            else:
+                _restamp_program_id(value, program_id)
+    elif isinstance(obj, list):
+        for value in obj:
+            _restamp_program_id(value, program_id)
+
+
+def _result_cache_key(xml, playground, params, diagnostics, include_timeline, include_battery):
+    treatment = (os.environ.get("GOAL_STRATEGY_CONDITIONAL_HATS")
+                 or os.environ.get("VEX_GOAL_PROFILES_CONDITIONAL_HATS")
+                 or "execute").lower()
+    return (
+        hashlib.sha256((xml or "").encode("utf-8", "surrogatepass")).hexdigest(),
+        playground if isinstance(playground, str) else repr(playground),
+        json.dumps(params, sort_keys=True, default=str),
+        bool(include_timeline), bool(include_battery),
+        tuple(sorted(set(diagnostics))),
+        str(configs_root()), treatment,
+        PIPELINE_VERSION, SCHEMA_VERSION,
+    )
+
+
 def _result(xml, program_id, playground, params, diagnostics, include_timeline, include_battery):
+    key = _result_cache_key(xml, playground, params, diagnostics, include_timeline, include_battery)
+    cached = _RESULT_CACHE.get(key)
+    if cached is not None:
+        _RESULT_CACHE.move_to_end(key)
+        result = copy.deepcopy(cached)
+        _restamp_program_id(result, program_id)
+        return result
+    result = _compute_result(xml, program_id, playground, params, diagnostics,
+                             include_timeline, include_battery)
+    _RESULT_CACHE[key] = copy.deepcopy(result)
+    if len(_RESULT_CACHE) > _RESULT_CACHE_MAX:
+        _RESULT_CACHE.popitem(last=False)
+    return result
+
+
+def _compute_result(xml, program_id, playground, params, diagnostics, include_timeline, include_battery):
     canonical = _canonical_playground(playground)
     result = dict(schema_version=SCHEMA_VERSION, pipeline_version=PIPELINE_VERSION,
                   program_id=program_id, index=None, event_index=None, ts=None,
