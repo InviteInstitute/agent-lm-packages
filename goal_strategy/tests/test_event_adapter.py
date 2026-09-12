@@ -86,6 +86,27 @@ def test_cards_are_isolated_and_config_source_is_resolved_each_call(tmp_path, mo
     assert load_configs('castle_crashers').config_version != first.config_version
 
 
+def test_alias_resolution_is_cached_and_cleared_with_configs(tmp_path, monkeypatch):
+    # The cached alias->canonical map must honor the same cache_clear() contract
+    # as the cards it is derived from: a new alias appears only after clearing.
+    from shutil import copytree
+    from goal_strategy.adapter import _canonical_playground
+    from goal_strategy.config import configs_root, load_configs
+    copytree(configs_root(), tmp_path/'cards')
+    monkeypatch.setenv('GOAL_STRATEGY_CONFIG_DIR', str(tmp_path/'cards'))
+    load_configs.cache_clear()                          # isolate from other tests' caches
+    assert _canonical_playground('CastleCrasherPlus') == 'castle_crashers'
+    assert _canonical_playground('BrandNewAlias') is None
+
+    card = tmp_path/'cards/playgrounds/castle_crashers.yaml'
+    card.write_text(card.read_text() + '\naliases:\n  - BrandNewAlias\n')
+    assert _canonical_playground('BrandNewAlias') is None   # still the cached map
+    load_configs.cache_clear()
+    assert _canonical_playground('BrandNewAlias') == 'castle_crashers'
+    monkeypatch.undo()
+    load_configs.cache_clear()                          # don't leak the temp dir's map
+
+
 def test_plain_output_reproducible_without_optional_imports():
     code = 'import sys,json; sys.modules.update({x:None for x in ["pandas","pyarrow","streamlit","plotly","apted"]}); from goal_strategy import goal_profile; print(json.dumps(goal_profile(' + repr(XML) + ',"stable"),sort_keys=True,allow_nan=False))'
     outputs = [subprocess.check_output([sys.executable, '-c', code], env=dict(os.environ, PYTHONHASHSEED=str(seed))) for seed in [1, 2, 42]]

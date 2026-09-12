@@ -10,7 +10,8 @@ from .adapter import (
     goal_profile, goal_profile_from_content, goal_profile_from_run_event,
     goal_profiles_from_events,
 )
+from .streaming import GoalProfileStream
 from .serialize import profile_to_dict, PIPELINE_VERSION
 
 __all__ += ["goal_profile", "goal_profile_from_content", "goal_profile_from_run_event",
-            "goal_profiles_from_events", "profile_to_dict", "PIPELINE_VERSION"]
+            "goal_profiles_from_events", "GoalProfileStream", "profile_to_dict", "PIPELINE_VERSION"]

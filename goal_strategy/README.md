@@ -73,6 +73,26 @@ Only Castle Crashers currently has cards. Its canonical name, VEX key `CastleCra
 
 Outcomes must already belong to the supplied run. Raw `playgroundData` events remain unassociated collection diagnostics. There is no inferred "next telemetry event" pairing. Repeated calls recompute outcome-dependent evidence, so late associated outcomes cannot return stale cached profiles.
 
+## Stream events in real time
+
+`goal_profiles_from_events` needs the whole session at once. When a host watches a student code and wants a profile the moment each run finishes, drive `GoalProfileStream` instead - the same pipeline, online:
+
+```python
+from goal_strategy import GoalProfileStream
+
+stream = GoalProfileStream(session_id="student/session")
+for event in live_event_source:            # one VEX event at a time, in arrival order
+    result = stream.push(event)            # a runProject returns its profiled run
+    if result is not None:
+        act_on(result)                     # else None (playgroundData / non-run events)
+
+# The playground telemetry for run 1 usually lands after run 1 was profiled:
+stream.associate_outcome(1, {"playground_data": {"parameters": {"weight_cleared": 700}},
+                             "end_status": "completed"})   # returns the refreshed run
+```
+
+`push` assigns the same global run index, playground inheritance, stable `program_id` and diagnostics as the batch call - `goal_profiles_from_events` is a thin driver over one stream, so the two cannot diverge. The guarantee that makes mid-session profiling trustworthy: the runs a stream has emitted after *k* events are identical to `goal_profiles_from_events` over those same *k* events. `associate_outcome` recomputes a prior run (never patches it), so a late outcome yields exactly the run the batch call produces with the outcome supplied up front, and never leaves stale evidence. `GoalProfileStream(..., include_timeline=True, include_battery=True)` streams those channels too. There is no server or thread here; any host loop (a websocket, a queue worker, a notebook) drives it. A runnable walkthrough is in [`examples/realtime.py`](../examples/realtime.py) (`GOAL_REALTIME_DELAY=0.6` paces it to feel live).
+
 ## Execution and confidence
 
 The profile, timeline and review plots share one nominal execution and scoring scope, including the card's cooperative scheduler, program rejection, boundary truncation and corroborated outcome override. Distinct battery/scatter worlds remain separate simulations.
@@ -85,7 +105,7 @@ The implemented five-scenario battery ships and is callable. New B-1 scenario fa
 
 ## Resources and private data
 
-Bundled cards, detector CSV and local Blockly JavaScript ship in the wheel. Configuration precedence is explicit `configs_dir` on typed/internal tools, then `GOAL_STRATEGY_CONFIG_DIR`, legacy `VEX_GOAL_PROFILES_CONFIG_DIR`, then bundled cards. Conditional hats accept `GOAL_STRATEGY_CONDITIONAL_HATS` and its legacy `VEX_GOAL_PROFILES_CONDITIONAL_HATS` alias. Cached configuration is copied per request; call `load_configs.cache_clear()` or restart after editing external cards.
+Bundled cards, detector CSV and local Blockly JavaScript ship in the wheel. Configuration precedence is explicit `configs_dir` on typed/internal tools, then `GOAL_STRATEGY_CONFIG_DIR`, legacy `VEX_GOAL_PROFILES_CONFIG_DIR`, then bundled cards. Conditional hats accept `GOAL_STRATEGY_CONDITIONAL_HATS` and its legacy `VEX_GOAL_PROFILES_CONDITIONAL_HATS` alias. Cached configuration is copied per request for isolation; playground alias resolution is cached alongside it, and `load_configs.cache_clear()` drops both. Call it, or restart, after editing external cards.
 
 Core profiling needs no dataset. Offline tools use explicit file paths or `GOAL_STRATEGY_DATA_DIR`. The checkout convenience is `data/goal_strategy/` relative to the working directory. Missing inputs explain how to configure a data directory. Keep the existing structure:
 
@@ -132,6 +152,7 @@ Both apps use bundled Blockly assets. Review tables reject stale/missing pipelin
 python -m pip install '.[dev]'
 python test_smoke.py
 python examples/end_to_end.py
+python examples/realtime.py
 python -m pytest -q -m 'not corpus'
 python -m build
 # With every confidential input and generated validation table present:

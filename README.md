@@ -79,12 +79,19 @@ caller. See [`learner_models/README.md`](learner_models/README.md).
 There's a runnable walkthrough in [`examples/end_to_end.py`](examples/end_to_end.py)
 that feeds synthetic event streams through all three packages. Goal evidence does not select feedback or change learner-model triggers.
 
+Goal evidence can also be produced **online**, one event at a time, for a host that
+watches a student code and wants a profile the moment each run finishes:
+`goal_strategy.GoalProfileStream` pushes events as they arrive and yields the same
+runs the batch call produces for the same prefix. See
+[`examples/realtime.py`](examples/realtime.py) and the goal_strategy README.
+
 ## Install / test
 
 ```bash
 pip install .                            # Python 3.10+, all three core packages
 python test_smoke.py                     # original 40 sibling-package tests
 python examples/end_to_end.py            # narrated walkthrough with real output
+python examples/realtime.py              # online goal profiling, event by event
 ```
 
 Install `.[dev]` and run `python -m pytest -q -m "not corpus"` for standalone goal validation. See [goal_strategy/README.md](goal_strategy/README.md) for associated-outcome APIs, optional tools, external data paths, and full-corpus qualification.

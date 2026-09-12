@@ -263,5 +263,21 @@ def _load_configs(playground, base):
         capabilities=capabilities,
     )
 
-# Keep the established explicit invalidation API.
-load_configs.cache_clear = _load_configs.cache_clear
+# Keep the established explicit invalidation API. Derived caches that read the
+# same card contents (e.g. the adapter's alias->canonical map) register here so
+# one cache_clear() call stays coherent after external cards are edited.
+_CACHE_CLEARERS = [_load_configs.cache_clear]
+
+
+def _clear_config_caches():
+    for clear in _CACHE_CLEARERS:
+        clear()
+
+
+def register_config_cache_clearer(clear):
+    """Register a derived-cache invalidator so load_configs.cache_clear() drops
+    it too. Called at import time by caches keyed on card contents."""
+    _CACHE_CLEARERS.append(clear)
+
+
+load_configs.cache_clear = _clear_config_caches

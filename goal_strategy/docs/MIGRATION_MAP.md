@@ -19,7 +19,7 @@ Port implementation version: `0.2.0`; dictionary envelope schema: `1`.
 | `design_instructions/` | `goal_strategy/design_instructions/` |
 | Private `data/` | External `GOAL_STRATEGY_DATA_DIR` |
 
-The original 13 package modules, 27 test modules, eight visualization modules, nine YAML cards, detector CSV, VEX/Blockly JavaScript, both workbooks, living documents and archives are preserved. New shared execution, fidelity, adapter, serialization, resource and validation helpers live alongside them. Root packaging/configuration changes are merged with the sibling packages.
+The original 13 package modules, 27 test modules, eight visualization modules, nine YAML cards, detector CSV, VEX/Blockly JavaScript, both workbooks, living documents and archives are preserved. New shared execution, fidelity, adapter, serialization, streaming, resource and validation helpers live alongside them. Root packaging/configuration changes are merged with the sibling packages.
 
 Replace Python imports `vex_goal_profiles` with `goal_strategy`, and `goal_strategy_detector` with `goal_strategy.detector`. Replace CLI module prefixes similarly. There is no compatibility alias that leaves a hidden dependency on the old repository. Public typed profile/timeline/battery APIs remain at their corresponding module paths.
 

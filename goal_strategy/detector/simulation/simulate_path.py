@@ -55,6 +55,7 @@ using math_heading = (180 - card_heading) % 360.
 from __future__ import annotations
 
 import copy as _copy
+import functools
 import math
 import random
 from dataclasses import dataclass, field
@@ -3947,9 +3948,21 @@ def _count_polygon_grid_cells(
 ) -> int:
     """Count 100mm grid cells whose centre falls inside a convex polygon.
 
-    Iterates over the AABB of the polygon and tests each cell centre against
-    the polygon. The AABB bounds are passed in to avoid recomputing them.
+    Pure geometry: the same playground region gives the same count on every run,
+    but the per-request config copy rebuilds the region each time, so the result
+    is memoized on the (hashable) vertices and bounds rather than on the region
+    object. The count is a plain int, so nothing observable changes.
     """
+    return _count_polygon_grid_cells_cached(tuple(vertices), x_min, x_max, y_min, y_max)
+
+
+@functools.lru_cache(maxsize=256)
+def _count_polygon_grid_cells_cached(
+    vertices: tuple[tuple[float, float], ...],
+    x_min: float, x_max: float, y_min: float, y_max: float,
+) -> int:
+    """Iterate over the polygon's AABB and test each cell centre. The AABB
+    bounds are passed in to avoid recomputing them."""
     cell = _COVERAGE_GRID_CELL_MM
     i_min = int(math.floor(x_min / cell))
     i_max = int(math.ceil(x_max / cell))
