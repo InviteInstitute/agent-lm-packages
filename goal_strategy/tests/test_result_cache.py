@@ -116,3 +116,33 @@ def test_cache_matches_uncached_output():
     adapter._result_cache_clear()
     recomputed = goal_profile(XML, 'x/0', {'weight_cleared': 700})
     assert fresh == recomputed
+
+
+def test_non_string_param_keys_do_not_crash():
+    # Review #4: a non-string key must not blow up the cache-key serialization.
+    r = goal_profile(XML, 'x', {1: 'ignored', 'weight_cleared': 700})
+    assert r['status'] in ('profiled', 'invalid_input')
+
+
+def test_concurrent_access_is_thread_safe(monkeypatch):
+    # Review #1: hammer the LRU from many threads with forced eviction churn;
+    # an unlocked OrderedDict would raise KeyError/RuntimeError on a get/evict race.
+    import threading
+    monkeypatch.setattr(adapter, '_RESULT_CACHE_MAX', 16)
+    xmls = [workspace(started('A', drive_for(100 + i))) for i in range(40)]
+    errors = []
+
+    def worker(tid):
+        try:
+            for r in range(120):
+                goal_profile(xmls[(tid * 5 + r) % len(xmls)], f't{tid}/{r}', {'weight_cleared': 700})
+        except Exception as exc:
+            errors.append(repr(exc))
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(8)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    assert not errors, errors[:3]
+    assert len(adapter._RESULT_CACHE) <= 16

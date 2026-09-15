@@ -20,7 +20,7 @@ from __future__ import annotations
 
 import json
 
-from .adapter import _object, _timestamp, goal_profile_from_content
+from .adapter import _object, _profile_obj, _timestamp
 
 
 class GoalProfileStream:
@@ -67,10 +67,13 @@ class GoalProfileStream:
         if outcome is not None and not isinstance(outcome, dict):
             raise ValueError(f'Outcome entry {index} must be a dict')
         result = self._profile_run(content, effective, inherited, outcome or {},
-                                   index, event_index, event, content_diagnostics)
+                                   index, event_index, event.get('ts'), content_diagnostics)
         self.runs.append(result)
+        # Keep only what re-profiling needs: the owned content copy, the resolved
+        # playground/inheritance, the pristine content diagnostics, and the ts.
+        # Not the whole event (it re-holds the content) - see review #2.
         self._records.append(dict(content=content, effective=effective, inherited=inherited,
-                                  event=event, event_index=event_index,
+                                  ts=event.get('ts'), event_index=event_index,
                                   content_diagnostics=content_diagnostics))
         self._previous_playground = effective
         return result
@@ -91,26 +94,28 @@ class GoalProfileStream:
             return None
         rec = self._records[index]
         result = self._profile_run(rec['content'], rec['effective'], rec['inherited'], outcome,
-                                   index, rec['event_index'], rec['event'],
-                                   list(rec['content_diagnostics']))
+                                   index, rec['event_index'], rec['ts'],
+                                   rec['content_diagnostics'])
         self.runs[index] = result
         return result
 
     def _profile_run(self, content, effective, inherited, associated, index, event_index,
-                     event, content_diagnostics):
+                     ts, content_diagnostics):
         program_id = associated.get('program_id') or json.dumps(
             [self.session_id, index], separators=(',', ':'))
         if not isinstance(program_id, str):
             raise ValueError('Associated program_id must be a string')
-        result = goal_profile_from_content(
-            content, program_id=program_id, playground=effective,
+        # Reuse the already-owned content copy; seed diagnostics with the content
+        # parse (a copy - _profile_obj extends it in place, the stored one stays
+        # pristine for re-profiling).
+        result = _profile_obj(
+            content, list(content_diagnostics), program_id=program_id, playground=effective,
             playground_data=associated.get('playground_data'),
             end_status=associated.get('end_status'),
             include_timeline=self._include_timeline, include_battery=self._include_battery)
         result.update(index=index, event_index=event_index)
-        result['diagnostics'].extend(content_diagnostics)
         if inherited and effective is not None:
             result['diagnostics'].append('inherited_playground')
-        _timestamp(event, result)
+        _timestamp({'ts': ts}, result)
         result['diagnostics'] = sorted(set(result['diagnostics']))
         return result

@@ -93,6 +93,15 @@ def test_playground_inheritance_carries_across_pushes():
     assert 'inherited_playground' in inherited['diagnostics']
 
 
+def test_records_are_minimal_no_event_retained():
+    # Review #2: keep only ts, not the whole event (which re-holds the content).
+    s = GoalProfileStream(SESSION)
+    s.push(event())
+    rec = s._records[0]
+    assert 'event' not in rec
+    assert 'ts' in rec and 'content' in rec
+
+
 @pytest.mark.parametrize('bad', ['', None, 5])
 def test_session_id_must_be_nonempty_string(bad):
     with pytest.raises(ValueError):

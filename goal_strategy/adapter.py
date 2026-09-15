@@ -7,6 +7,7 @@ import hashlib
 import json
 import math
 import os
+import threading
 from collections import OrderedDict
 
 from .config import ConfigError, configs_root, load_configs, register_config_cache_clearer
@@ -105,10 +106,14 @@ def _params(value, canonical, end_status, diagnostics):
 # cache is dropped by load_configs.cache_clear() so in-place card edits stay honest.
 _RESULT_CACHE: "OrderedDict[tuple, dict]" = OrderedDict()
 _RESULT_CACHE_MAX = 256
+# The other caches use functools.lru_cache (internally locked); this manual LRU
+# needs its own lock so concurrent hosts can't race get/evict into a KeyError.
+_RESULT_CACHE_LOCK = threading.Lock()
 
 
 def _result_cache_clear():
-    _RESULT_CACHE.clear()
+    with _RESULT_CACHE_LOCK:
+        _RESULT_CACHE.clear()
 
 
 register_config_cache_clearer(_result_cache_clear)
@@ -132,10 +137,18 @@ def _result_cache_key(xml, playground, params, diagnostics, include_timeline, in
     treatment = (os.environ.get("GOAL_STRATEGY_CONDITIONAL_HATS")
                  or os.environ.get("VEX_GOAL_PROFILES_CONDITIONAL_HATS")
                  or "execute").lower()
+    try:
+        params_key = json.dumps(params, sort_keys=True, default=str)
+    except TypeError:
+        # Non-string / heterogeneous param keys can't be sorted by json; coerce
+        # keys to str. Safe for the cache key - unrecognized keys don't affect
+        # the profile, so grouping them together never returns a stale result.
+        params_key = json.dumps({str(k): v for k, v in params.items()},
+                                sort_keys=True, default=str)
     return (
         hashlib.sha256((xml or "").encode("utf-8", "surrogatepass")).hexdigest(),
         playground if isinstance(playground, str) else repr(playground),
-        json.dumps(params, sort_keys=True, default=str),
+        params_key,
         bool(include_timeline), bool(include_battery),
         tuple(sorted(set(diagnostics))),
         str(configs_root()), treatment,
@@ -145,17 +158,24 @@ def _result_cache_key(xml, playground, params, diagnostics, include_timeline, in
 
 def _result(xml, program_id, playground, params, diagnostics, include_timeline, include_battery):
     key = _result_cache_key(xml, playground, params, diagnostics, include_timeline, include_battery)
-    cached = _RESULT_CACHE.get(key)
+    with _RESULT_CACHE_LOCK:
+        cached = _RESULT_CACHE.get(key)
+        if cached is not None:
+            _RESULT_CACHE.move_to_end(key)
     if cached is not None:
-        _RESULT_CACHE.move_to_end(key)
+        # Copy outside the lock; the cached master is never mutated in place.
         result = copy.deepcopy(cached)
         _restamp_program_id(result, program_id)
         return result
+    # Compute outside the lock so a slow simulation never serializes all callers;
+    # a concurrent duplicate miss just recomputes the same value (last write wins).
     result = _compute_result(xml, program_id, playground, params, diagnostics,
                              include_timeline, include_battery)
-    _RESULT_CACHE[key] = copy.deepcopy(result)
-    if len(_RESULT_CACHE) > _RESULT_CACHE_MAX:
-        _RESULT_CACHE.popitem(last=False)
+    stored = copy.deepcopy(result)
+    with _RESULT_CACHE_LOCK:
+        _RESULT_CACHE[key] = stored
+        if len(_RESULT_CACHE) > _RESULT_CACHE_MAX:
+            _RESULT_CACHE.popitem(last=False)
     return result
 
 
@@ -200,6 +220,16 @@ def goal_profile_from_content(content, *, program_id, playground=None, playgroun
                               end_status=None, include_timeline=False, include_battery=False):
     diagnostics = []
     obj = _object(content, 'content', diagnostics)
+    return _profile_obj(obj, diagnostics, program_id=program_id, playground=playground,
+                        playground_data=playground_data, end_status=end_status,
+                        include_timeline=include_timeline, include_battery=include_battery)
+
+
+def _profile_obj(obj, diagnostics, *, program_id, playground=None, playground_data=None,
+                 end_status=None, include_timeline=False, include_battery=False):
+    """Profile an already-parsed, caller-owned content dict. Lets the streaming
+    path reuse the copy it made for inheritance/replay instead of _object-ing the
+    content a second time. `diagnostics` is seeded and extended in place."""
     effective = obj.get('playground') if obj.get('playground') is not None else playground
     project = _object(obj.get('project'), 'project', diagnostics)
     xml = project.get('workspace')
