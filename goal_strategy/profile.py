@@ -30,6 +30,9 @@ class Indicator:
     value: float | bool | str | None  # continuous where one exists — always populated
     rung: str | None
     rung_edges: list                  # echoed for auditability
+    rung_labels: list                 # ordered ladder labels, low->high position
+    direction: str | None             # numeric ladders: lower_is_better|higher_is_better
+    absent_label: str | None          # rung for a meaningful absence (not abstention)
     abstained: bool
     abstain_reason: str | None
     flags: list[str]
@@ -283,6 +286,9 @@ def _evaluate_indicator(spec: IndicatorSpec, ectx: EvalContext,
         value=result.value,
         rung=rung,
         rung_edges=list(spec.rungs.edges) if spec.rungs else [],
+        rung_labels=list(spec.rungs.labels) if spec.rungs else [],
+        direction=spec.rungs.direction if spec.rungs else None,
+        absent_label=spec.rungs.absent_label if spec.rungs else None,
         abstained=result.abstained,
         abstain_reason=result.abstain_reason,
         flags=sorted(set(flags)),
