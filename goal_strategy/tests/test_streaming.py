@@ -114,3 +114,51 @@ def test_bad_outcome_type_is_rejected():
         s.push(event(), outcome='not-a-dict')
     with pytest.raises(ValueError):
         s.associate_outcome(0, 'not-a-dict')
+
+
+from goal_strategy.tests.test_hat_execution import workspace  # noqa: E402
+from goal_strategy.tests.test_scheduler import started  # noqa: E402
+
+# Namespaced like real Blockly output, so these programs reach the simulator.
+_DRIVE_XML = workspace(started('A', '<block type="pg_drivetrain_drive_for" id="d">'
+    '<field name="DIRECTION">fwd</field><field name="UNITS">mm</field>'
+    '<value name="AMOUNT"><shadow type="math_number"><field name="NUM">200</field>'
+    '</shadow></value></block>'))
+# The same drive, by round(Infinity) mm: the simulator raises on it.
+_OVERFLOW_XML = _DRIVE_XML.replace(
+    '<shadow type="math_number"><field name="NUM">200</field></shadow>',
+    '<block type="pg_operator_round"><value name="NUM"><shadow type="math_number">'
+    '<field name="NUM">Infinity</field></shadow></value></block>')
+
+
+def test_engine_error_keeps_later_runs_on_their_own_index():
+    # Host safety: an engine defect on one run is an explicit per-run status,
+    # not an exception. If it escaped, a host that catches it would lose the
+    # run and every later run's global index would land on the wrong program.
+    assert _OVERFLOW_XML != _DRIVE_XML
+    events = [event(xml=_DRIVE_XML), event(xml=_OVERFLOW_XML), event(xml=_DRIVE_XML)]
+    s = stream_runs(events, include_battery=True, include_rubric=True, include_rollup=True)
+    assert [r['index'] for r in s.runs] == [0, 1, 2]
+    assert s.runs[1]['status'] == 'engine_error'
+    assert 'engine_error' in s.runs[1]['diagnostics']
+    assert s.runs[1]['profile'] is None
+    assert s.runs[2]['status'] == 'profiled'
+    # a late outcome for the errored run re-profiles it without raising either
+    assert s.associate_outcome(1, {'playground_data': {'weight_cleared': 500}})['index'] == 1
+
+
+def test_failed_optional_channel_keeps_the_profile(monkeypatch):
+    import goal_strategy.testcases as testcases
+    from goal_strategy.adapter import _result_cache_clear
+
+    def boom(*a, **k):
+        raise RuntimeError('battery defect')
+
+    monkeypatch.setattr(testcases, 'run_battery', boom)
+    _result_cache_clear()  # a cached earlier result would skip the failing battery
+    r = GoalProfileStream(SESSION, include_battery=True, include_rubric=True,
+                          include_rollup=True).push(event(xml=_DRIVE_XML))
+    assert r['status'] == 'profiled' and r['profile'] is not None
+    assert r['battery'] is None and r['rubric'] is None
+    assert 'battery_failed' in r['diagnostics']
+    assert r['rollup'] is not None  # derived goals still read from the profile

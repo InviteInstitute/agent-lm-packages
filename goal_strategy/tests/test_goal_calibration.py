@@ -11,6 +11,21 @@ import pytest
 # extra ([goal-strategy-analysis]), so skip this module cleanly when absent.
 pytest.importorskip("pandas")
 
+# The calibration table is assembled from the private stage-3 sweep outputs, so
+# every case here is a corpus case (skipped unless the data is present, and
+# required under --require-goal-data).
+pytestmark = pytest.mark.corpus
+
+
+@pytest.fixture(autouse=True)
+def _stage3_data(request):
+    from goal_strategy.paths import data_path
+    path = data_path("ccp_run_dataset", "stage3_battery.csv")
+    if not path.is_file():
+        if request.config.getoption("--require-goal-data"):
+            pytest.fail(f"Missing required goal data: {path}")
+        pytest.skip(f"Private goal data unavailable: {path}")
+
 
 @pytest.fixture(scope="module")
 def table():
@@ -47,11 +62,11 @@ def test_abstentions_are_nan_not_zero():
     off the sweep CSV: wherever a row carries an abstain_reason, the
     corresponding table cell must be NaN."""
     import csv
-    from pathlib import Path
 
     from goal_strategy.goal_calibration import calibration_table
+    from goal_strategy.paths import data_path
     table = calibration_table().set_index("run_id")
-    data = Path(__file__).resolve().parent.parent / "data" / "ccp_run_dataset"
+    data = data_path("ccp_run_dataset")
     checked = 0
     with open(data / "stage3_battery.csv") as fh:
         for r in csv.DictReader(fh):

@@ -196,8 +196,20 @@ def _compute_result(xml, program_id, playground, params, diagnostics,
                   rollup=None, diagnostics=diagnostics)
     if canonical is None:
         return result
-    execution = prepare_execution(xml, program_id, params, canonical)
-    prof = _profile(xml, program_id, params, canonical, _execution=execution)
+    # Host safety: an engine defect on one student program (e.g. an overflow in
+    # the simulator) must yield an explicit per-run status, never an exception
+    # out of the call. Otherwise a streaming host that catches the error loses
+    # the run, and every later run's global index shifts onto the wrong program.
+    # A ConfigError is a deployment fault, not a program's, so it still raises.
+    try:
+        execution = prepare_execution(xml, program_id, params, canonical)
+        prof = _profile(xml, program_id, params, canonical, _execution=execution)
+    except ConfigError:
+        raise
+    except Exception as exc:
+        diagnostics[:] = sorted(set(diagnostics) | {'engine_error'})
+        result.update(status='engine_error', reason=type(exc).__name__)
+        return result
     if execution.program is None:
         diagnostics.append('invalid_xml')
     for goal in prof.goals:
@@ -208,9 +220,21 @@ def _compute_result(xml, program_id, playground, params, diagnostics,
     invalid = [d for d in diagnostics if d.startswith('invalid_') or d.endswith('_invalid') or d == 'conflicting_telemetry_playground']
     result.update(status='invalid_input' if invalid else 'profiled',
                   reason=invalid[0] if invalid else None, profile=profile_to_dict(prof))
+    def channel(name, compute):
+        # An optional channel failing drops only that channel (null, with a
+        # '<name>_failed' diagnostic); the computed profile is kept.
+        try:
+            return compute()
+        except ConfigError:
+            raise
+        except Exception:
+            diagnostics[:] = sorted(set(diagnostics) | {f'{name}_failed'})
+            return None
+
     if include_timeline:
         from .timeline import timeline_result
-        result['timeline'] = to_dict(timeline_result(xml, program_id, params, canonical, _execution=execution))
+        result['timeline'] = channel('timeline', lambda: to_dict(
+            timeline_result(xml, program_id, params, canonical, _execution=execution)))
     # Battery-once: the battery runs its own designed worlds (separate
     # simulations, by design). When any battery-fed channel is requested it
     # runs a SINGLE time with collect_sims=True, and that one report is shared
@@ -218,27 +242,27 @@ def _compute_result(xml, program_id, playground, params, diagnostics,
     report = None
     if include_battery or include_rubric or include_rollup:
         from .testcases import run_battery
-        report = run_battery(xml, program_id, canonical, collect_sims=True)
-    if include_battery:
+        report = channel('battery', lambda: run_battery(xml, program_id, canonical,
+                                                        collect_sims=True))
+    if include_battery and report is not None:
         # Strip the collected artifacts so the battery output is identical to a
         # plain collect_sims=False run (they are internal sim data, never part
         # of the battery channel).
         import dataclasses
         result['battery'] = to_dict(dataclasses.replace(report, artifacts=()))
-    if include_rubric:
+    if include_rubric and report is not None:
         # PROVISIONAL purpose-2 (rubric_status = provisional_stage2E). Reuses
         # the shared execution's parsed program and simulation for the code
         # channel and the shared battery report for the scenario channel.
         from .rubric_online import rubric_dimensions, rubric_to_dict
-        dims = rubric_dimensions(execution.program, execution.context.full_sim,
-                                 program_id, prof.config_version, canonical,
-                                 report=report)
-        result['rubric'] = rubric_to_dict(dims)
+        result['rubric'] = channel('rubric', lambda: rubric_to_dict(rubric_dimensions(
+            execution.program, execution.context.full_sim, program_id,
+            prof.config_version, canonical, report=report)))
     if include_rollup:
         # Purpose-1 rolled-up goal claims (the agent-facing meta view): banded
         # from the shared battery report, enriched from the computed profile.
         from .rollup_online import goal_rollup
-        result['rollup'] = goal_rollup(prof, report, canonical)
+        result['rollup'] = channel('rollup', lambda: goal_rollup(prof, report, canonical))
     return result
 
 

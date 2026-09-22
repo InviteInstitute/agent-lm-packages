@@ -25,8 +25,8 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
-_ROOT = Path(__file__).resolve().parent.parent.parent
-_DATA = _ROOT / "data" / "ccp_run_dataset"
+from .config import configs_root
+from .paths import data_path
 
 _STATUS_SCORE = {"pass": 1.0, "conditional": 0.5, "fail": 0.0}
 
@@ -45,7 +45,7 @@ def calibration_table(data_dir: str | None = None):
     (`<scenario>__<check>`), plus `<scenario>__abstain` reason columns
     and `<scenario>__capped` markers."""
     import pandas as pd
-    d = Path(data_dir) if data_dir else _DATA
+    d = Path(data_dir) if data_dir else data_path("ccp_run_dataset")
 
     # --- battery predictors, per run (identical for identical programs) ---
     batt: dict[str, dict] = {}
@@ -121,8 +121,8 @@ if __name__ == "__main__":   # pragma: no cover
 def coverage_edges(playground: str = "castle_crashers") -> list:
     """The CDZ cut points, read from the goals card — never hardcoded."""
     import yaml
-    card = yaml.safe_load(open(_ROOT / "configs" / "goals"
-                               / f"{playground}.yaml"))
+    with open(configs_root() / "goals" / f"{playground}.yaml") as fh:
+        card = yaml.safe_load(fh)
     for goal in card.get("goals", []):
         for ind in (goal.get("indicators") or []) + \
                 (goal.get("attainment") or []) + (goal.get("intent") or []):
