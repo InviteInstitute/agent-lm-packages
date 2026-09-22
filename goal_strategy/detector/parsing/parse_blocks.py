@@ -2,11 +2,11 @@
 
 VENDORING STATUS — no longer byte-identical to VEX_model_tracing (OI-14 fix,
 reviewer-authorised 2026-08-18): the <value> branch now prefers a connected
-<block> over the obscured <shadow> default, per Blockly convention. The integration port additionally normalizes unnamespaced Blockly tags and
-bounds XML size, depth, and element count before recursive IR construction.
+<block> over the obscured <shadow> default, per Blockly convention. This is the
+only divergence in this file.
 
 The Blockly XML schema uses namespace https://developers.google.com/blockly/xml.
-Unnamespaced input is normalized to the Blockly namespace before tag lookup.
+All tag lookups require the fully-qualified name, e.g. ``{ns}block``.
 
 Key XML element types handled:
   <block type="..." id="...">   — a single block node
@@ -54,28 +54,12 @@ def parse_workspace(xml_str: str, program_id: str) -> Optional[BlockProgram]:
     Returns:
         A populated BlockProgram, or None if xml_str is empty/unparseable.
     """
-    if not isinstance(xml_str, str) or not xml_str.strip() or len(xml_str) > 2_000_000:
+    if not xml_str or not xml_str.strip():
         return None
 
-    if "<!DOCTYPE" in xml_str.upper() or "<!ENTITY" in xml_str.upper():
-        return None
     try:
         root = ET.fromstring(xml_str)
-    except (ET.ParseError, ValueError):
-        return None
-
-    # Normalize only ordinary/Blockly tags; preserve foreign mutation metadata.
-    pending = [(root, 0)]
-    count = 0
-    while pending:
-        element, depth = pending.pop()
-        count += 1
-        if depth > 200 or count > 20_000:
-            return None
-        if "}" not in element.tag:
-            element.tag = _B + element.tag
-        pending.extend((child, depth + 1) for child in element)
-    if root.tag != _TAG_XML:
+    except ET.ParseError:
         return None
 
     # ------------------------------------------------------------------ #

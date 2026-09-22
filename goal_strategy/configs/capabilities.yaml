@@ -34,7 +34,16 @@ families:
   pg_drivetrain_: {class: simulates}
   pg_magnet_: {class: simulates}
   pg_variables_: {class: simulates}
-  pg_operator_: {class: simulates}       # expression evaluator coverage
+  pg_operator_: {class: simulates,
+      note: "Prefix rule. It was WRONG for four members until 2026-08-31
+        (OI-31): and_or, math, comparison and range each read a field named
+        OPERATOR that no corpus block carries, so each silently returned its
+        default — `or` evaluated as AND, `-`/`*` as `+`, comparisons as `=`.
+        A blanket `simulates` claim over a prefix hides that; what now backs
+        it is an audit diffing every field name the simulator READS against
+        every field name present in corpus XML, plus per-operator tests in
+        tests/test_operator_fields.py. Re-run the audit before extending this
+        prefix to a new playground's block set."}
   pg_looks_: {class: simulates, note: faithful no-op — pen/console state is
       invisible to robot motion, sensors, and every goal indicator}
   math_: {class: simulates, kind: value}
@@ -53,7 +62,19 @@ blocks:
         detection event; re-fires on condition re-entry, one edge while
         continuously true), mid-move transition latching. Physics-coupled
         re-triggering off knocked pieces is unreconstructable — the
-        detection_physics fidelity lane attributes those endpoints.}
+        detection_physics fidelity lane attributes those endpoints.
+        VARIANT SCOPE — BOTH variants modeled since 2026-08-31 (OI-26).
+        The loses variant fires on the true->false transition of the SAME
+        cone predicate, requires a prior acquisition, and re-arms per
+        acquire->lose cycle — all three semantics reviewer-probed in VR
+        (Probe A silent with nothing ever in view; the drive-through
+        probe fired on knock-away; the 2,500mm follow-up fired per
+        cycle). One shared edge machinery (between-blocks check, mid-move
+        pre-scan latch, restart) — restart semantics for loses are
+        INHERITED from detects, an assumption (Probe C unrun).
+        trigger_unfaithful is retired for modeled eyes; loses-predicates
+        over disturbed movables degrade via sensor_reading_stale as
+        ever.}
   pg_events_when_bumper: {class: simulates,
       note: contact model, measured radii (OI-6 retired); edge-triggered
         re-arming semantics (2026-08-24, same as the eye hat)}
@@ -124,6 +145,27 @@ blocks:
         are suppressed with procedure_recursion_suppressed; calls to a
         missing definition no-op with procedure_undefined.}
   procedures_prototype: {class: simulates, kind: inert}
+
+  # ── operators with modelled-but-not-faithful semantics ──
+  # NOTE: no `flag:` key here on purpose — the presence-based D2 gate only
+  # fires for class `unsimulable`. This flag is raised at the EVALUATION
+  # site in the simulator, so it marks runs where the block actually ran,
+  # not merely programs where it appears (an unreached branch degrades
+  # nothing).
+  pg_operator_random: {class: testable,
+      note: "MODELLED BY SUBSTITUTION, not faithfully (2026-08-28). The real
+        block draws a value we cannot know, and it RE-DRAWS on every
+        evaluation — in 138 of the 139 corpus runs that use it the block sits
+        inside a loop, so the error compounds across many independent draws.
+        We sample per evaluation from a generator SEEDED on the program id:
+        the sequence varies within a run (a single substituted constant
+        misrepresented the behaviour — the pre-2026-08-28 midpoint rule) while
+        replay stays identical, so pins hold and a battery scenario's paired
+        runs draw the same values. Runs whose trajectory depends on it are
+        unreproducible IN PRINCIPLE and carry `nondeterministic_variable`;
+        the draw count is a result field, never a flag. random_policy
+        low/high/midpoint brackets the declared range. Incidence 139 runs /
+        11 students."}
 
   # ── structural / leaves ──
   text: {class: simulates, kind: value}

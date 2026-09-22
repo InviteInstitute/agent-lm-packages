@@ -15,18 +15,16 @@ learner-models = ["apted>=1.0"]
 
 goal-strategy = ["pyyaml"]
 goal-strategy-analysis = ["pandas", "pyarrow"]
-goal-strategy-viz = ["pandas", "pyarrow", "streamlit>=1.50", "plotly>=6"]
-dev = ["pytest", "build", "pandas", "pyarrow", "streamlit>=1.50", "plotly>=6"]
+dev = ["pytest", "build", "pandas", "pyarrow"]
 
 [tool.setuptools]
 include-package-data = false
-packages = ["log_parser_delta_engine", "learner_models", "goal_strategy", "goal_strategy.detector", "goal_strategy.detector.parsing", "goal_strategy.detector.simulation", "goal_strategy.viz"]
+packages = ["log_parser_delta_engine", "learner_models", "goal_strategy", "goal_strategy.detector", "goal_strategy.detector.parsing", "goal_strategy.detector.simulation"]
 
 [tool.setuptools.package-data]
 log_parser_delta_engine = ["vex_blocks.json"]
 goal_strategy = ["README.md", "configs/*.yaml", "configs/playgrounds/*.yaml", "configs/goals/*.yaml", "configs/robot/*.yaml", "configs/testcases/*/*.yaml"]
 "goal_strategy.detector" = ["data/*.csv"]
-"goal_strategy.viz" = ["*.js", "vendor/*.js", "vendor/*.png", "vendor/BLOCKLY_LICENSE"]
 
 [tool.pytest.ini_options]
 markers = ["corpus: requires confidential goal datasets or generated validation artifacts"]

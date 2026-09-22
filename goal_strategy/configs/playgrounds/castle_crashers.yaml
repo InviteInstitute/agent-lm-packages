@@ -5,6 +5,13 @@ playground_id: castle_crashers
 # retrodiction, G5 attribution (14 named changes) and G6 battery gate.
 simulation:
   scheduler: cooperative
+  # Measured 60Hz frame (OI-28, 2026-08-28; scratch-vm source constant
+  # 1/60, confirmed four ways by the B1/B2 blocks-mode probe series).
+  # Loops consume real time and continuous motion MARCHES, so
+  # continuous-drive-under-polling executes instead of freezing and
+  # resolving as fabricated runoff. Applies only when the caller supplies
+  # the run's observed duration as the wall-clock budget.
+  loop_clock_hz: 60
 playground_name: Castle Crashers Plus
 vex_playground_key: CastleCrasherPlus
 
@@ -103,7 +110,57 @@ fidelity_thresholds:
   # divergence-possible — nothing more (ruling: simulate as best we can,
   # flag the potential, don't over-explain; other playgrounds will have
   # their own quirks).
-  edge_divergence_zone_mm: 71.2  # any part of the robot overhangs the edge
+  # WIDENED 71.2 -> 400 (reviewer ruling 2026-08-28). The old value was a
+  # PHYSICAL claim — the robot half-diagonal, i.e. "any part of the robot
+  # overhangs the edge". The new value is a PLAUSIBILITY band: near enough
+  # to the edge that the playground's slip quirk could credibly have acted.
+  # NOTE the consequence for readers: `edge_zone_traversed` no longer means
+  # the robot overhung the boundary, only that it came within the band.
+  # 400 is chosen to match off_island_edge_slip_mm — ONE threshold expressing
+  # the same edge uncertainty from two directions (how close OUR PATH came to
+  # the edge; how close the REAL ENDPOINT came to our path). It also sits in
+  # a real gap in the data: of the runs no mechanism explains, clearances run
+  # 71-376mm and then jump to 708mm, so 400 and 600 classify identically.
+  edge_divergence_zone_mm: 400
+  # LOCALITY radius for the edge_zone_possible lane (reviewer ruling
+  # 2026-08-28). The lane previously asked only "did the path come within
+  # the band of ANY edge?" — with no tie to where the robot actually left.
+  # On a 3.4m island that is nearly vacuous: 56 of the 93 runs it credited
+  # had their near-edge approach on a DIFFERENT edge from the one the GPS
+  # lies beyond (DOVE-C058 grazed the north-east edge while the robot left
+  # 3,839mm away past the south-east one). The lane now also requires our
+  # edge-band approach to be within this radius of the real GPS final.
+  #
+  # RULED 1500 (reviewer adjudication 2026-09-11, closing the
+  # anticipated review): the 16-run UNATTRIBUTED queue was measured
+  # against this exact metric (GPS final -> nearest zone-traversing
+  # path point) and judged case by case. The <=1500 band (1,170-1,369:
+  # WREN-C014, CROW-C005, CROW-C091, DOVE-C016) reads as likely slips
+  # (zone clearances 97-376mm, GPS 0.5-1.2m beyond the edge, bearings
+  # within the post-departure arc). CROW-C059_S005_run_042 (1,578 —
+  # despite a 97mm edge ride) and everything above were ruled
+  # UNEXPLAINED DEVIATION and stay unattributed (DOVE-C108 at 2,492
+  # and CROW-C114 at 3,036 explicitly rejected). Prior measured
+  # distribution (93-run lane population): median 656mm, p75 1,474mm,
+  # max 3,783mm; retention 600mm: 44, 800mm: 56, 1000mm: 63,
+  # 1500mm: 70, 2000mm: 79, 2500mm: 83. The radius absorbs
+  # POST-DEPARTURE travel (a program keeps running after the robot is
+  # off the island; ~1.5s at the calibrated 494mm/s).
+  edge_zone_locality_mm: 1500
+
+  # HELD AT 400 (reviewer ruling 2026-08-28, after a same-day 400->700 raise
+  # was tried and REVERTED). The momentum account stands: a real robot carries
+  # past the boundary trigger and slips off before its turn executes, while we
+  # respond on the exact frame the sensor fires — 28 of 29 unattributed runs
+  # were "sim says ON, GPS says OFF", never the reverse. But raising THIS
+  # bound was the wrong lever: edge_slip is checked BEFORE sensor_uncertainty,
+  # so 700mm attributed only 10 more runs while taking 49 away from a lane
+  # that names a real sensing mechanism. Widening edge_divergence_zone_mm
+  # instead reaches 28 of the 29 and touches neither lane, because
+  # edge_zone_possible is checked LAST — it can only absorb runs that already
+  # fell through every specific mechanism. It is also the more honest claim:
+  # edge_slip ASSERTS the endpoint is within bound of our trajectory, whereas
+  # the zone says only that divergence was POSSIBLE there.
   off_island_edge_slip_mm: 400   # gps-to-trajectory, when off-island status disagrees
   # Outcome-override (reviewer ruling 2026-08-19, WREN-C032): when the sim
   # reports a boundary exit but the MEASURED outcome says the run ended
@@ -439,6 +496,19 @@ regions:
 robot:
   length_mm: 133
   width_mm: 50.8
+  # Conservative contact reach (reviewer ruling 2026-08-31, C161
+  # investigation): the direction-free disc radius from the robot CENTER
+  # at which body contact with movable objects is DECLARED. The chassis
+  # is 133 x 50.8, circumscribed radius ~71mm, with the distance sensor
+  # at the nose (mount 66.5) — so "sensor reads ~0" is physical contact
+  # in VR (the rock rolls; readings go stale). 100 = circumscribed
+  # chassis + ~29mm margin so approaches truncated mid-convergence still
+  # register the contact VR produces. ASSUMED-CONSERVATIVE by ruling,
+  # deliberately NOT precision-probed: errs toward FIRING the
+  # disturbance (degrade-with-a-flag), never toward silent trust.
+  # Main-sim contact detection only — the battery's kinematic push pin
+  # is its own declared model.
+  contact_forward_reach_mm: 100
   wheel_diameter_mm: 50
   wheel_circumference_mm: 157.08
   notes: >

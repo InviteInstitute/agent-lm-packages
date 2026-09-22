@@ -1,0 +1,69 @@
+# T2 boundary response (angled — 65 degree path-border incidence, block at the intersection).
+# Debris-free (reviewer-ruled 2026-08-31): a featureless
+# enlarged arena until the program's first sensing
+# evaluation, when a boundary edge AND its red ring
+# materialize around the robot's actual pose — no restart,
+# program state preserved. A run that never activates or
+# never approaches the placed edge ABSTAINS (three ruled
+# tokens), never fails.
+# IN-SIM PROBE: same intersection block; the border is rotated 25 degrees so the
+#   path meets it at 65-degree incidence (path/heading unchanged) —
+#   tests boundary management when the line is not where a
+#   square-world assumption puts it.
+# SCORING NOTE (reviewer-agreed 2026-08-31): a step-wise
+# checker (drive_for N, then test red) samples space at
+# N-mm intervals against an 89mm ring — whether it catches
+# the ring is lattice alignment, faithful to VR (no
+# polling mid-block there either). detects=pass with
+# stays_on_island=fail therefore reads FRAGILE boundary
+# strategy, not absence of one.
+# Rollup: NOT wired into _rollup.yaml yet (ruled 2026-08-31 — the T5
+# precedent); the family contributes nothing until the weighting ruling.
+# Constructed deterministically by scripts/generate_battery_cards.py.
+scenario_id: t2b_angled
+family: t2_boundary
+description: T2 boundary response — angled — 65 degree path-border incidence, block at the intersection.
+goal: remain_on_island
+testcase_physics: {push_model: kinematic, loop_unroll: 60, clear_extension_fraction: 0.55,
+                    loop_clock_hz: 60, time_budget_s: 60, invariance_budget_s: 30}
+# B-1 forward-design constraint (SENSOR_TESTBATTERY §6.2):
+evidence:
+  variables: [boundary_responsivity, robot_on_island]
+applies: whole_run
+# Episode segmentation thresholds (B-2, reviewer-ruled 2026-08-31:
+# card-declared, values DERIVED from this card's environment):
+#   engagement_radius_mm = piece body_radius 100 + contact pin 125.4
+#   retreat_mm           = the family's retreat trigger (400)
+#   band_mm              = the ring width (89, production calibration)
+#   stall_mm             = the measured frozen threshold (50)
+#   divergence_mm        = the detects check's divergence bound (100)
+#   post_clear_bar_mm     = completion-cue bar (2026-09-05): a post-clear
+#                          behaviour change within this travel reads as
+#                          USING the disappearance cue (~one drive_for-150
+#                          chunk, the corpus idiom; first-pass, revisable)
+#   eye_reach_mm          = down-eye forward offset (robot card) — the
+#                          encounter band is band_mm + eye_reach so an
+#                          ENCOUNTER = the eye entered the ring (boundary
+#                          became sensor-relevant), not the CENTRE within
+#                          the band; a program that stops precisely short
+#                          then reads as a SURVIVED encounter, not as none
+#                          (reviewer 2026-09-01).
+#   exit_grace_mm        = the production card's physical half-diagonal
+#                          (on_island_xy_mm 71.2) — an encounter is failed
+#                          only when the CENTRE exceeds the edge by more
+#                          (reviewer ruling 2026-09-01: same permissible
+#                          extension in both instruments)
+episode_rules: {engagement_radius_mm: 225.4, retreat_mm: 400, band_mm: 89,
+                stall_mm: 50, divergence_mm: 100, turn_change_deg: 15,
+                exit_grace_mm: 71.2, eye_reach_mm: 35, post_clear_bar_mm: 150}
+arena_polygon_mm: [[8000, 8000], [8000, -8000], [-8000, -8000], [-8000, 8000]]
+encounter_within_mm: 400
+world_events:
+  - id: encounter_1
+    at: activation
+    place_boundary: {ahead_mm: 900, approach_angle_deg: 25, ring_width_mm: 89}
+    pieces:
+      block_1: {relative: {ahead_mm: 900, bearing_deg: 0}, body_radius_mm: 100}
+checks:
+  - {name: detects,         rule: behavioral_divergence, divergence_mm: 100, facet: boundary_detection}
+  - {name: stays_on_island, rule: edge_encounters_survived, facet: edge_failure_handling}

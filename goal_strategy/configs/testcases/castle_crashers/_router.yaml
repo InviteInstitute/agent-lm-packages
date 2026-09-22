@@ -1,0 +1,28 @@
+# Battery ROUTER card (reviewer-ruled 2026-09-03, built 2026-09-05 —
+# PIPELINE_DATAFLOW's two-question diamond made real). The battery gate
+# asks two independent questions:
+#   GOAL eligibility  — sensing the production sim cannot faithfully
+#                       evidence (movable-object sensors; down-eye red
+#                       excluded because the sim models it). Unchanged;
+#                       lives in testcases.py's qualifier scan.
+#   RUBRIC eligibility — OPTIONAL (this toggle): executable sensing left
+#                       AMBIGUOUS by the production trace. Captures the
+#                       down-eye-only class (~381 runs / 34 students;
+#                       ~70% never fired red in production). Routed runs
+#                       execute ONLY the families below; their rows are
+#                       channel=rubric_only and NEVER feed the goal
+#                       rollup or the purpose-1 calibration.
+router_id: castle_crashers_router_v1
+rubric_gate:
+  enabled: true
+  # boundary family only (ruling 2026-09-03): T2's assured encounters
+  # ARE the missing diagnostic state; clearing families add nothing for
+  # programs with no object sensing.
+  families: [t2_boundary, t3_block_boundary, t6_reengagement]
+  # ambiguity = zero production arm alternations. Read from
+  # stage2_code_evidence.csv when present (the pipeline-faithful order:
+  # stage-2 regenerates first); a run absent from that table routes
+  # STRUCTURALLY (down-eye-only shape alone) with the ambiguity check
+  # recorded as unavailable.
+  ambiguity: production_alternations_zero
+  ambiguity_source: stage2_code_evidence.csv

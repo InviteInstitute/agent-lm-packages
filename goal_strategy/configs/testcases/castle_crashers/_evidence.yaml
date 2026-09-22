@@ -1,0 +1,315 @@
+# Evidence-variable registry v2 (construct-separability ruling,
+# 2026-09-05). Each variable now carries:
+#   primary:    the ONE construct home (usually a single dimension) —
+#               the indicator's defining role
+#   supporting: dimensions it informs contextually
+#   role:       indicator | validation | diagnostic | metadata —
+#               validation variables (cross-variant profiles, shared
+#               structure) VALIDATE claims established elsewhere;
+#               diagnostic variables (2026-09-09) EXPLAIN why an
+#               indicator fired and never score; metadata variables
+#               (evaluability counts) gate/annotate, never score
+# U-routing runs over primary + supporting (an abstained scenario is U
+# for every dimension its variables touch); the combiner weighs primary
+# above supporting and treats validation as corroboration only.
+# post_clear_bar_mm (episode_rules) gates completion_triggered_transition.
+registry_id: castle_crashers_evidence_v2
+dimensions:
+- environmental_feedback
+- control_structure
+- spatial_motion
+- representation
+- task_state_regulation
+- recovery
+variables:
+  census_ceilings:
+    extractor: rubric_evidence.code_evidence
+    scope: per_run
+    role: indicator
+    primary: []
+    supporting:
+    - environmental_feedback
+    - control_structure
+    - spatial_motion
+    - representation
+    - task_state_regulation
+    - recovery
+  condition_arm_alternations:
+    extractor: rubric_evidence.code_evidence
+    scope: per_run
+    role: indicator
+    primary:
+    - environmental_feedback
+    supporting: []
+  construct_coordination_relations:
+    extractor: rubric_evidence.code_evidence
+    scope: per_run
+    role: indicator
+    primary:
+    - control_structure
+    supporting: []
+  architecture_census:
+    extractor: rubric_evidence.code_evidence
+    scope: per_run
+    role: indicator
+    primary:
+    - control_structure
+    supporting: []
+    fields:
+    - exercised_loops_fixed
+    - exercised_loops_state
+    - exercised_loops_forever
+    - exercised_conditional_count
+    - max_nesting_depth
+    - state_controlled_termination
+  state_terminated_motion_fraction:
+    extractor: rubric_evidence.code_evidence
+    scope: per_run
+    role: indicator
+    primary:
+    - spatial_motion
+    supporting:
+    - environmental_feedback
+  state_gated_drivetrain_count:
+    # DEMOTED indicator -> diagnostic (OI-33 ruling 2026-09-10): the
+    # ARCHITECTURE count — motion under an evaluated sensing
+    # conditional, execution not required. Explains attempts; the
+    # executed variant scores.
+    extractor: rubric_evidence.code_evidence
+    scope: per_run
+    role: diagnostic
+    primary: []
+    supporting:
+    - spatial_motion
+  state_gated_drivetrain_executed:
+    # OI-33 ruling (2026-09-10, "attempts are flawed"): THE SMC-2
+    # production floor — gated motion blocks that actually ran.
+    extractor: rubric_evidence.code_evidence
+    scope: per_run
+    role: indicator
+    primary:
+    - spatial_motion
+    supporting: []
+  gated_sensor_fields:
+    # Diagnostic (OI-33): which sensor[field] gates motion — surfaces
+    # the mis-wired-sensor misconception class (front-eye edge checks)
+    # without scoring it.
+    extractor: rubric_evidence.code_evidence
+    scope: per_run
+    role: diagnostic
+    primary: []
+    supporting:
+    - spatial_motion
+  computed_motion_param_count:
+    # DEMOTED indicator -> diagnostic (SMC lower-scale ruling
+    # 2026-09-09): literal-vs-computed is not the construct
+    # distinction; it no longer scores anywhere.
+    extractor: rubric_evidence.code_evidence
+    scope: per_run
+    role: diagnostic
+    primary: []
+    supporting:
+    - spatial_motion
+    - representation
+  fixed_motion_specificity:
+    # SMC lower-scale ruling 2026-09-09: THE route-B L1 indicator —
+    # coarse/default palette (0) vs differentiated fixed parameters
+    # (1); None = insufficient fixed motion. Rule + palette in
+    # _claims.yaml (smc_specificity / smc_vocabulary).
+    extractor: rubric_evidence.smc_lower_columns
+    scope: per_run
+    role: indicator
+    primary:
+    - spatial_motion
+    supporting: []
+  fixed_motion_vocabulary_diagnostics:
+    # distinct_drive_clusters / distinct_turn_clusters /
+    # canonical_prop / fine_value_count / canonical_ambiguous_matches:
+    # ingredients that explain the specificity indicator and annotate
+    # route-A ambiguity — never separate scoring variables.
+    extractor: rubric_evidence.smc_lower_columns
+    scope: per_run
+    role: diagnostic
+    primary: []
+    supporting:
+    - spatial_motion
+  motion_literal_count_meta:
+    # motion_literal_count as SMC evaluability metadata (the U gate:
+    # insufficient executed fixed motion -> not_evaluable), reviewer-
+    # ruled 2026-09-09. It gates; it never scores.
+    extractor: rubric_evidence.calibration_audit
+    scope: per_run
+    role: metadata
+    primary: []
+    supporting:
+    - spatial_motion
+  code_representation_metrics:
+    extractor: rubric_evidence.code_evidence
+    scope: per_run
+    role: indicator
+    primary:
+    - representation
+    supporting: []
+    fields:
+    - procedure_metrics
+    - variable_metrics
+    - duplicated_sequence_count
+  response_latency_mm:
+    extractor: battery_evidence.scenario_evidence
+    scope: per_scenario
+    role: indicator
+    families:
+    - t1_debris_field
+    - t2_boundary
+    - t3_block_boundary
+    - t4_debris_configuration
+    - t5_heading_perturbation
+    - t6_reengagement
+    - t7_managed_clearing
+    primary:
+    - environmental_feedback
+    supporting:
+    - recovery
+  engagement_latency_mm:
+    extractor: battery_evidence.scenario_evidence
+    scope: per_scenario
+    role: indicator
+    families:
+    - t1_debris_field
+    - t3_block_boundary
+    - t4_debris_configuration
+    - t5_heading_perturbation
+    - t6_reengagement
+    - t7_managed_clearing
+    primary:
+    - environmental_feedback
+    supporting:
+    - task_state_regulation
+  boundary_band_entries:
+    extractor: battery_evidence.scenario_evidence
+    scope: per_scenario
+    role: indicator
+    families:
+    - t1_debris_field
+    - t2_boundary
+    - t3_block_boundary
+    - t5_heading_perturbation
+    - t6_reengagement
+    - t7_managed_clearing
+    primary:
+    - environmental_feedback
+    supporting:
+    - recovery
+  corrective_response_present:
+    extractor: battery_evidence.scenario_evidence
+    scope: per_scenario
+    role: indicator
+    families:
+    - t2_boundary
+    - t4_debris_configuration
+    - t5_heading_perturbation
+    - t6_reengagement
+    - t7_managed_clearing
+    primary:
+    - recovery
+    supporting: []
+  correction_reassessment_cycles:
+    extractor: battery_evidence.scenario_evidence
+    scope: per_scenario
+    role: indicator
+    families:
+    - t2_boundary
+    - t5_heading_perturbation
+    - t6_reengagement
+    - t7_managed_clearing
+    primary:
+    - recovery
+    supporting:
+    - environmental_feedback
+    - task_state_regulation
+  task_state_triggered_transition_count:
+    extractor: battery_evidence.scenario_evidence
+    scope: per_scenario
+    role: indicator
+    families:
+    - t1_debris_field
+    - t3_block_boundary
+    - t6_reengagement
+    - t7_managed_clearing
+    primary:
+    - task_state_regulation
+    supporting: []
+  task_phase_return_count:
+    extractor: battery_evidence.scenario_evidence
+    scope: per_scenario
+    role: indicator
+    families:
+    - t6_reengagement
+    - t7_managed_clearing
+    - t2_boundary
+    primary:
+    - task_state_regulation
+    supporting:
+    - recovery
+  completion_triggered_transition:
+    extractor: battery_evidence.scenario_evidence
+    scope: per_scenario
+    role: indicator
+    families:
+    - t1_debris_field
+    - t3_block_boundary
+    - t4_debris_configuration
+    - t5_heading_perturbation
+    primary:
+    - task_state_regulation
+    supporting: []
+  post_clear_action_latency_mm:
+    extractor: battery_evidence.scenario_evidence
+    scope: per_scenario
+    role: indicator
+    families:
+    - t1_debris_field
+    - t3_block_boundary
+    - t4_debris_configuration
+    - t5_heading_perturbation
+    primary:
+    - task_state_regulation
+    supporting: []
+  behavioral_transition_count:
+    extractor: battery_evidence.scenario_evidence
+    scope: per_scenario
+    role: indicator
+    families:
+    - t1_debris_field
+    - t3_block_boundary
+    - t6_reengagement
+    - t7_managed_clearing
+    primary: []
+    supporting:
+    - task_state_regulation
+  cross_variant_outcome_profile:
+    extractor: battery_evidence.family_evidence
+    scope: per_family
+    role: validation
+    families:
+    - t2_boundary
+    - t4_debris_configuration
+    - t5_heading_perturbation
+    - t7_managed_clearing
+    primary: []
+    supporting:
+    - spatial_motion
+    - recovery
+    - representation
+  shared_structure_across_variants:
+    extractor: battery_evidence.family_evidence
+    scope: per_family
+    role: validation
+    families:
+    - t2_boundary
+    - t4_debris_configuration
+    - t6_reengagement
+    - t7_managed_clearing
+    primary: []
+    supporting:
+    - representation

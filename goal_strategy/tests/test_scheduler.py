@@ -195,7 +195,13 @@ def test_thread_start_order_reverse_document():
 def test_loop_clock_and_time_budget():
     """60Hz loop clock (measured): each otherwise-instant iteration costs one
     tick; the observed-run budget replaces the unroll caps and halts the
-    program like a stop (no runoff)."""
+    program like a stop (no runoff).
+
+    OI-28 (2026-08-28): the clock is now COOPERATIVE-ONLY — the back-edge
+    tick is a time park consumed by the Sequencer, which is the one place
+    that turns elapsed time into displacement. These single-stack
+    assertions are unchanged from the sequential era (G3: single-stack
+    cooperative is byte-identical to sequential)."""
     bump = ('<block type="pg_variables_change_variable" id="cv">'
             '<field name="VARIABLE">a</field>'
             '<value name="VALUE"><shadow type="math_number">'
@@ -205,11 +211,12 @@ def test_loop_clock_and_time_budget():
     xml = workspace(started("A", forever))
     prog = parse_workspace(xml, "t")
     # clock without budget: 20 unrolls x 1/60s
-    sim = simulate_path(prog, ctx(), loop_iteration_time_s=1 / 60)
+    sim = simulate_path(prog, ctx(), scheduler="cooperative",
+                       loop_iteration_time_s=1 / 60)
     assert abs(sim.sim_time_s - 20 / 60) < 1e-9
     # clock + 2s budget: the cap is replaced; the clock binds at ~120 iters
-    sim2 = simulate_path(prog, ctx(), loop_iteration_time_s=1 / 60,
-                         time_budget_s=2.0)
+    sim2 = simulate_path(prog, ctx(), scheduler="cooperative",
+                         loop_iteration_time_s=1 / 60, time_budget_s=2.0)
     assert "time_budget_exhausted" in sim2.execution_flags
     assert abs(sim2.sim_time_s - 2.0) < 0.05
     assert not sim2.fabricated_steps          # budget stop => no runoff
@@ -220,7 +227,7 @@ def test_loop_clock_and_time_budget():
          '<field name="NUM">2</field></shadow></value>'
          f'<statement name="SUBSTACK">{drive_for(494)}</statement></block>')))
     sim3 = simulate_path(parse_workspace(xml3, "t"), ctx(),
-                         loop_iteration_time_s=1 / 60)
+                         scheduler="cooperative", loop_iteration_time_s=1 / 60)
     assert abs(sim3.sim_time_s - 2 * 494 / 494.0) < 1e-6   # 1s each, no top-up
 
 

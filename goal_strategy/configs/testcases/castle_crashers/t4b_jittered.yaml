@@ -1,0 +1,87 @@
+# T4b jittered — three blocks still INSIDE the debris zone but shifted
+# 276-475mm off the standard castle-piece locations, so plausible
+# clearing opportunities remain while the EXPECTED GEOMETRY does not.
+# A program that memorised castle positions loses its map here; one
+# that actually senses debris does not. block_3 sits deliberately
+# 148mm BEYOND the measured 2,000mm distance range (an earlier
+# placement landed at surface 1,998mm — a 2mm margin inside a bound
+# whose probe uncertainty is +/-50mm, so its detectability would have
+# flipped on measurement noise). The axis corridor within range is
+# owned by real castle pieces, so nothing off-castle can sit there:
+# T4b's spawn-undetectability is therefore DELIBERATE, not marginal.
+# Canonical spawn and heading — ONLY the debris configuration
+# varies across T4, so the family reads generalisation of
+# clearing behaviour, not start dependence (that is T5).
+# IN-SIM PROBE: distance_found FALSE at the spawn pose (block_3 is 148mm beyond
+#   the measured 2,000mm range, deliberately clear of it); a 2.5m
+#   dead-reckon meets NEITHER debris nor the boundary — the blocks
+#   are off the westward line. Opportunities exist but none is
+#   handed to a program that only drives the canonical path.
+# Clear rule (reviewer-ruled 2026-09-02, second revision — supersedes
+# both the OI-27 fraction-of-radius bar and the short-lived
+# direction-blind displacement rule): SLIP-BAND, boundary-relative —
+# a piece is cleared once PUSHED to within clear_slip_margin_mm INSIDE
+# the island edge (or beyond). Margin 200 = ONE BLOCK DIAMETER: a piece
+# within a diameter of the edge would in reality be pressing into its
+# outer-wall neighbours and shoving them off (the block-chain physics
+# the sim declares away). Probed 2026-09-02 over margins 125-400 on the
+# 101-program telemetry sample: correlations statistically flat across
+# 125-300 (T1 weight +.31-.35, coverage +.38-.41), so the value is
+# chosen on physical interpretability, reviewer-revisable. Rationale: in the real environment
+# blocks interact — early clearing happens far from the edge through
+# block-on-block chains pushing outer pieces off; only as blocks
+# deplete must the robot drive near the edge. Our declared
+# no-piece-piece-interaction sim represents that with a generous slip
+# zone on the integrated worlds (T1/T4/T5). The BOUNDARY family
+# (T2/T3/T6) keeps the TIGHT extension bar (55% of radius past the
+# edge) — those tests exist to read precise block-at-boundary
+# handling. Pushing a piece around the interior earns nothing
+# (engagement covers that).
+# Constructed deterministically by scripts/generate_battery_cards.py.
+scenario_id: t4b_jittered
+family: t4_debris_configuration
+description: T4 debris configuration — jittered.
+goal: [clear_debris_zone, remain_on_island]
+testcase_physics: {push_model: kinematic, loop_unroll: 60,
+                    clear_rule: slip_band, clear_slip_margin_mm: 200,
+                    loop_clock_hz: 60, time_budget_s: 60, invariance_budget_s: 30}
+# B-1 forward-design constraint (SENSOR_TESTBATTERY §6.2):
+evidence:
+  variables: [debris_responsivity, proportion_engaged, proportion_cleared, robot_on_island]
+applies: whole_run
+# Episode segmentation thresholds (B-2, reviewer-ruled 2026-08-31:
+# card-declared, values DERIVED from this card's environment):
+#   engagement_radius_mm = piece body_radius 100 + contact pin 125.4
+#   retreat_mm           = the family's retreat trigger (400)
+#   band_mm              = the ring width (89, production calibration)
+#   stall_mm             = the measured frozen threshold (50)
+#   divergence_mm        = the detects check's divergence bound (100)
+#   post_clear_bar_mm     = completion-cue bar (2026-09-05): a post-clear
+#                          behaviour change within this travel reads as
+#                          USING the disappearance cue (~one drive_for-150
+#                          chunk, the corpus idiom; first-pass, revisable)
+#   eye_reach_mm          = down-eye forward offset (robot card) — the
+#                          encounter band is band_mm + eye_reach so an
+#                          ENCOUNTER = the eye entered the ring (boundary
+#                          became sensor-relevant), not the CENTRE within
+#                          the band; a program that stops precisely short
+#                          then reads as a SURVIVED encounter, not as none
+#                          (reviewer 2026-09-01).
+#   exit_grace_mm        = the production card's physical half-diagonal
+#                          (on_island_xy_mm 71.2) — an encounter is failed
+#                          only when the CENTRE exceeds the edge by more
+#                          (reviewer ruling 2026-09-01: same permissible
+#                          extension in both instruments)
+episode_rules: {engagement_radius_mm: 225.4, retreat_mm: 400, band_mm: 89,
+                stall_mm: 50, divergence_mm: 100, turn_change_deg: 15,
+                exit_grace_mm: 71.2, eye_reach_mm: 35, post_clear_bar_mm: 150}
+pieces:
+  block_1: {x: -330, y: 470, body_radius_mm: 100}
+  block_2: {x: 95, y: -880, body_radius_mm: 100}
+  block_3: {x: -1300, y: 240, body_radius_mm: 100}
+checks:
+  - {name: detects,            rule: behavioral_divergence, divergence_mm: 100, facet: object_detection}
+  - {name: proportion_engaged, rule: proportion_engaged, facet: object_engagement}
+  - {name: proportion_cleared, rule: proportion_cleared, facet: push_execution}
+  - {name: stays_on_island,    rule: edge_encounters_survived, facet: edge_failure_handling,
+     goal: remain_on_island}

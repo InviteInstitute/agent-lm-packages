@@ -1,0 +1,62 @@
+# Purpose-1 BANDED rollup (v2 — the §4.8 FULLY-RULED spec, 2026-09-04;
+# supersedes the v1 weighted-mean capability levels, RETIRED by ruling
+# D2(a)). THE single place where battery observations become the goal
+# claim; every cut and threshold lives here, card-revisable, never in
+# src/. The per-check evidence rows remain the durable artifact.
+#
+# The ruled shape (SENSOR_TESTBATTERY §4.8, decision history there):
+#   score  = FLAT MEAN of the goal's check over VALID (non-abstained)
+#            tests — abstention shrinks the denominator, never zeroes
+#            (D1(b): clearing-only purity; no engagement, no detection).
+#   band   = the score cut into the RULED rungs below (telemetry-mapped
+#            2026-09-04; ROI's rejected >=.9 band recorded in FINDINGS).
+#   U      = all contributing checks abstained -> no band, with the
+#            dominant abstain reason carried as a sub-tag (D3(b)).
+#   certainty = full, minus demotions: sparse_evidence (fewer valid
+#            tests than sparse_min_valid) and budget_sensitive (the
+#            band moves between the two duration budgets — D4(a): the
+#            primary-budget band is KEPT, certainty drops, never U).
+#   P(remain_on_island) = the calibrated family logistic
+#            (purpose1_calibration.json); band-vs-model disagreement is
+#            a SURFACED FLAG, never a silent average (D5(a)).
+rollup_id: castle_crashers_banded_v2
+goals:
+  clear_debris_zone:
+    # indicator-vocabulary name (reviewer-ruled 2026-09-05): the test
+    # channel's entry alongside debris_zone_coverage (sim) and
+    # weight_cleared (outcome) — channel: test.
+    indicator: cleared_proportion_tests
+    check: proportion_cleared
+    # rungs ruled 2026-09-04: the .10 step is the empirically decisive
+    # one (median telemetry 50 -> 1,550kg across it); meaningful+
+    # production coverage 14/17/36/77% by band.
+    rungs:
+      - {min: 0.35, band: broad_systematic}
+      - {min: 0.10, band: meaningful_multi_condition}
+      - {min: 0.02, band: narrow_inconsistent}
+      - {min: 0.0,  band: little_no_capability}
+    # 10 static-world tests always measure clearing, so CDZ evidence is
+    # nearly always broad; the sparse gate exists for symmetry.
+    sparse_min_valid: 8
+  remain_on_island:
+    # completes the on_island_sim / on_island_observed / on_island_tests
+    # triple (reviewer-ruled 2026-09-05) — channel: test.
+    indicator: on_island_tests
+    check: stays_on_island
+    # rungs ruled 2026-09-04: .5 = "survives at least half its boundary
+    # encounters" — the largest weight step on the scale (1,033 ->
+    # 2,912kg); a >=.9 "robust" band was tested and REJECTED
+    # (indistinguishable from .5-.9 on sim/observed/weight —
+    # perfection-vs-mostly is purpose-2 texture).
+    rungs:
+      - {min: 0.5, band: boundary_safe}
+      - {min: 0.1, band: condition_dependent}
+      - {min: 0.0, band: boundary_unsafe}
+    # the <=4-valid class measured at 12% of runs (2026-09-03).
+    sparse_min_valid: 5
+    # calibrated mapping for the binary production inference
+    calibrated_model: purpose1_calibration.json
+# engage_plow: NO battery channel, BY DESIGN (reviewer ruling
+# 2026-09-01) — plow attachment is faithfully simulated, so its sim
+# channel is never U-gated; any rollup surface shows it as such, never
+# as a gap.

@@ -95,6 +95,8 @@ def _profile(workspace_xml: str, program_id: str,
              conditional_hats: str | None = None,
              stack_precedence: str | None = None,
              scheduler: str | None = None,
+             run_duration_s: float | None = None,
+             duration_imputed: bool = False,
              _execution=None) -> GoalProfile:
     """profile() plus the internal knobs: full-path scoring for the design-time
     regression pins, an alternate configs directory for tests, and the task-3
@@ -109,7 +111,8 @@ def _profile(workspace_xml: str, program_id: str,
     from .execution import prepare_execution
     execution = _execution or prepare_execution(
         workspace_xml, program_id, playground_params, playground, truncate,
-        configs_dir, conditional_hats, stack_precedence, scheduler)
+        configs_dir, conditional_hats, stack_precedence, scheduler,
+        run_duration_s=run_duration_s, duration_imputed=duration_imputed)
     cfg, program, ectx = execution.config, execution.program, execution.context
     full_sim, scored_sim = ectx.full_sim, ectx.scored_sim
     code_facts = ectx.code_facts
@@ -184,6 +187,15 @@ def _profile(workspace_xml: str, program_id: str,
             if detail["verdict"] == "UNATTRIBUTED" and indicator.channel == "simulation":
                 indicator.flags.append("sim_unverified")
             indicator.flags = sorted(set(indicator.flags))
+    # Construct-separability build (source parity): expose the production sim +
+    # parsed program as plain attributes so the stage-2 sweeps can extract
+    # production-side rubric code evidence WITHOUT re-simulating. The shared
+    # execution refactor dropped this, which silently blanked the code channel
+    # of stage2_code_evidence.csv (rung_sweep/battery_sweep read them via
+    # getattr). Not dataclass fields - provenance attachments, absent from any
+    # serialization.
+    result.full_sim = full_sim
+    result.parsed_program = program
     return result
 
 
