@@ -33,12 +33,15 @@ class GoalProfileStream:
     ``associate_outcome`` re-profiles an earlier run once its outcome is known.
     """
 
-    def __init__(self, session_id, *, include_timeline=False, include_battery=False):
+    def __init__(self, session_id, *, include_timeline=False, include_battery=False,
+                 include_rubric=False, include_rollup=False):
         if not isinstance(session_id, str) or not session_id:
             raise ValueError('A nonempty session_id is required')
         self.session_id = session_id
         self._include_timeline = include_timeline
         self._include_battery = include_battery
+        self._include_rubric = include_rubric
+        self._include_rollup = include_rollup
         self._previous_playground = None
         self._event_index = 0
         self.runs = []          # profiled runs; runs[i]['index'] == i
@@ -112,7 +115,8 @@ class GoalProfileStream:
             content, list(content_diagnostics), program_id=program_id, playground=effective,
             playground_data=associated.get('playground_data'),
             end_status=associated.get('end_status'),
-            include_timeline=self._include_timeline, include_battery=self._include_battery)
+            include_timeline=self._include_timeline, include_battery=self._include_battery,
+            include_rubric=self._include_rubric, include_rollup=self._include_rollup)
         result.update(index=index, event_index=event_index)
         if inherited and effective is not None:
             result['diagnostics'].append('inherited_playground')

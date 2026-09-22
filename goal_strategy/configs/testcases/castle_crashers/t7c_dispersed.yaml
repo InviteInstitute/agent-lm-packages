@@ -1,0 +1,83 @@
+# T7 managed clearing — T4c dispersed — all three blocks OUTSIDE the debris zone, including
+# one directly BEHIND the robot's start (1400,49 — 180 deg off the
+# spawn heading, 386mm back). Substantially harder for any program
+# that depends on expected debris locations or on driving west:
+# reaching this debris requires turning away from the castle.
+# WORLD DELIBERATELY IDENTICAL to the matching T4 card (same
+# pieces, same canonical spawn): the ONLY difference is the
+# clear rule — tight extension (55% of radius past the edge)
+# instead of the 200mm slip band — so any T4<->T7 behavioural
+# difference is attributable to the boundary demand alone
+# (reviewer ruling 2026-09-03). Clearing here REQUIRES precise
+# boundary management: each piece must be pushed to the physical
+# edge with the robot finishing inside the encounter band.
+# IN-SIM PROBE: out-of-zone configuration under the tight rule: C004 clears 1.00 with
+#   band_entries=2; pursuit 0.33 (hardest T7 variant, as in T4).
+# Clear rule (reviewer-ruled 2026-09-02, second revision — supersedes
+# both the OI-27 fraction-of-radius bar and the short-lived
+# direction-blind displacement rule): SLIP-BAND, boundary-relative —
+# a piece is cleared once PUSHED to within clear_slip_margin_mm INSIDE
+# the island edge (or beyond). Margin 200 = ONE BLOCK DIAMETER: a piece
+# within a diameter of the edge would in reality be pressing into its
+# outer-wall neighbours and shoving them off (the block-chain physics
+# the sim declares away). Probed 2026-09-02 over margins 125-400 on the
+# 101-program telemetry sample: correlations statistically flat across
+# 125-300 (T1 weight +.31-.35, coverage +.38-.41), so the value is
+# chosen on physical interpretability, reviewer-revisable. Rationale: in the real environment
+# blocks interact — early clearing happens far from the edge through
+# block-on-block chains pushing outer pieces off; only as blocks
+# deplete must the robot drive near the edge. Our declared
+# no-piece-piece-interaction sim represents that with a generous slip
+# zone on the integrated worlds (T1/T4/T5). The BOUNDARY family
+# (T2/T3/T6) keeps the TIGHT extension bar (55% of radius past the
+# edge) — those tests exist to read precise block-at-boundary
+# handling. Pushing a piece around the interior earns nothing
+# (engagement covers that).
+# Constructed deterministically by scripts/generate_battery_cards.py.
+scenario_id: t7c_dispersed
+family: t7_managed_clearing
+description: T7 managed clearing — dispersed (T4's world, tight clear rule).
+goal: [clear_debris_zone, remain_on_island]
+testcase_physics: {push_model: kinematic, loop_unroll: 60,
+                    clear_extension_fraction: 0.55,
+                    loop_clock_hz: 60, time_budget_s: 60, invariance_budget_s: 30}
+# B-1 forward-design constraint (SENSOR_TESTBATTERY §6.2):
+evidence:
+  variables: [debris_responsivity, proportion_engaged, proportion_cleared, robot_on_island]
+applies: whole_run
+# Episode segmentation thresholds (B-2, reviewer-ruled 2026-08-31:
+# card-declared, values DERIVED from this card's environment):
+#   engagement_radius_mm = piece body_radius 100 + contact pin 125.4
+#   retreat_mm           = the family's retreat trigger (400)
+#   band_mm              = the ring width (89, production calibration)
+#   stall_mm             = the measured frozen threshold (50)
+#   divergence_mm        = the detects check's divergence bound (100)
+#   post_clear_bar_mm     = completion-cue bar (2026-09-05): a post-clear
+#                          behaviour change within this travel reads as
+#                          USING the disappearance cue (~one drive_for-150
+#                          chunk, the corpus idiom; first-pass, revisable)
+#   eye_reach_mm          = down-eye forward offset (robot card) — the
+#                          encounter band is band_mm + eye_reach so an
+#                          ENCOUNTER = the eye entered the ring (boundary
+#                          became sensor-relevant), not the CENTRE within
+#                          the band; a program that stops precisely short
+#                          then reads as a SURVIVED encounter, not as none
+#                          (reviewer 2026-09-01).
+#   exit_grace_mm        = the production card's physical half-diagonal
+#                          (on_island_xy_mm 71.2) — an encounter is failed
+#                          only when the CENTRE exceeds the edge by more
+#                          (reviewer ruling 2026-09-01: same permissible
+#                          extension in both instruments)
+episode_rules: {engagement_radius_mm: 225.4, retreat_mm: 400, band_mm: 89,
+                stall_mm: 50, divergence_mm: 100, turn_change_deg: 15,
+                exit_grace_mm: 71.2, eye_reach_mm: 35, post_clear_bar_mm: 150}
+pieces:
+  block_1_behind_spawn: {x: 1400, y: 49, body_radius_mm: 100}
+  block_2_ne_outfield: {x: 900, y: 900, body_radius_mm: 100}
+  block_3_se_outfield: {x: 760, y: -820, body_radius_mm: 100}
+checks:
+  - {name: detects,            rule: behavioral_divergence, divergence_mm: 100, facet: object_detection}
+  - {name: proportion_engaged, rule: proportion_engaged, facet: object_engagement}
+  - {name: proportion_cleared, rule: proportion_cleared, facet: push_execution}
+  - {name: stays_on_island,    rule: edge_encounters_survived, facet: edge_failure_handling,
+     goal: remain_on_island}

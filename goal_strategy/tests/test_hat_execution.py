@@ -461,13 +461,60 @@ def test_change_variable_accumulates_into_drive_amounts():
     assert result.net_displacement_from_spawn == 500.0   # 100 + (100+300)
 
 
-def test_operator_random_is_deterministic_midpoint():
-    xml = workspace(hat("pg_events_when_started",
-        '<block type="pg_drivetrain_drive_for" id="d1">'
-        '<field name="DIRECTION">fwd</field><field name="UNITS">mm</field>'
-        '<value name="AMOUNT"><block type="pg_operator_random" id="r1">'
-        '<value name="FROM"><shadow type="math_number"><field name="NUM">100</field></shadow></value>'
-        '<value name="TO"><shadow type="math_number"><field name="NUM">300</field></shadow></value>'
-        '</block></value></block>'))
-    for _ in range(3):
-        assert sim(xml).net_displacement_from_spawn == 200.0   # midpoint, every run
+def _random_drive(n=1):
+    """A drive whose distance is `random 100 to 300`, repeated n times."""
+    one = ('<block type="pg_drivetrain_drive_for" id="d{i}">'
+           '<field name="DIRECTION">fwd</field><field name="UNITS">mm</field>'
+           '<value name="AMOUNT"><block type="pg_operator_random" id="r{i}">'
+           '<value name="FROM"><shadow type="math_number"><field name="NUM">100</field></shadow></value>'
+           '<value name="TO"><shadow type="math_number"><field name="NUM">300</field></shadow></value>'
+           '</block></value>{nxt}</block>')
+    body = ""
+    for i in range(n, 0, -1):
+        body = one.format(i=i, nxt=f"<next>{body}</next>" if body else "")
+    return workspace(hat("pg_events_when_started", body))
+
+
+def test_operator_random_samples_per_evaluation_and_is_replayable():
+    """2026-08-28: the block RE-DRAWS on every evaluation — a student's
+    `random 60 to 120` inside a loop takes a new value each iteration, so
+    substituting one constant misrepresents the behaviour (the pre-2026-08-28
+    midpoint rule). Sampling is SEEDED from the program id, so replay
+    identity still holds: pins and frozen fixtures stay meaningful, and a
+    battery scenario's paired runs draw the same sequence."""
+    xml = _random_drive(6)
+    runs = [sim(xml) for _ in range(3)]
+    # replayable: identical every time
+    assert len({r.net_displacement_from_spawn for r in runs}) == 1
+    # each evaluation is counted, and the uncertainty is NAMED
+    assert runs[0].nondeterministic_draws == 6
+    assert "nondeterministic_variable" in runs[0].execution_flags
+    # the six draws are NOT all the same value (that was the old defect):
+    # six midpoints would give exactly 1200mm
+    assert runs[0].net_displacement_from_spawn != 1200.0
+    # and every draw stays inside the student's declared range
+    assert 6 * 100 <= runs[0].net_displacement_from_spawn <= 6 * 300
+
+
+def test_random_policy_brackets_the_declared_range():
+    """The range extremes are available for bracketing an unreproducible
+    run, the way movable_predicates brackets debris scatter."""
+    from goal_strategy.detector.parsing.parse_blocks import parse_workspace
+    from goal_strategy.detector.simulation.simulate_path import simulate_path
+    xml = _random_drive(3)
+    def run(policy):
+        return simulate_path(parse_workspace(xml, "rng-test"), ctx(),
+                             random_policy=policy).net_displacement_from_spawn
+    assert run("low") == 300.0            # 3 x 100
+    assert run("high") == 900.0           # 3 x 300
+    assert run("midpoint") == 600.0       # 3 x 200, the retired default
+    assert 300.0 <= run("sampled") <= 900.0
+
+
+def test_random_draws_are_absent_when_the_block_is():
+    """No random block: no flag, no draws — the marker must never appear
+    on a program that has nothing nondeterministic about it."""
+    plain = workspace(hat("pg_events_when_started", drive_for(500)))
+    s = sim(plain)
+    assert s.nondeterministic_draws == 0
+    assert "nondeterministic_variable" not in s.execution_flags

@@ -55,9 +55,9 @@ using math_heading = (180 - card_heading) % 360.
 from __future__ import annotations
 
 import copy as _copy
-import functools
 import math
-import random
+import random as _random
+import zlib as _zlib
 from dataclasses import dataclass, field
 from typing import Optional, Any
 
@@ -261,6 +261,12 @@ class PlaygroundContext:
     objects: dict[str, ObjectRef]   # {object_id: ObjectRef}
     regions: dict[str, RegionBounds]  # {region_id: RegionBounds}
     robot_width_mm: float = 50.8  # physical robot width — used for footprint-aware coverage
+    # Conservative contact reach (reviewer ruling 2026-08-31): the
+    # direction-free disc radius at which body contact with movables is
+    # declared (max'd with width/2). 0 = legacy disc-only contact (cards
+    # that do not declare it are unaffected). Provenance of the declared
+    # value: the playground card's robot: section.
+    contact_forward_reach_mm: float = 0.0
     # Ordered (x, y) mm vertices of the playable boundary polygon (inner edge of red ring).
     # When present, boundary checking uses point-in-polygon instead of the circular fallback.
     field_hex_vertices: list[tuple[float, float]] | None = None
@@ -288,6 +294,13 @@ class PlaygroundContext:
     #   loop_unroll: N         — raises the forever/repeat caps so looping
     #                            clearers can finish the job under test
     testcase_physics: dict = field(default_factory=dict)
+    # Scheduled mid-run world mutations (boundary family Phase 2,
+    # reviewer-approved plan 2026-08-28, built 2026-08-31). Inert when
+    # empty. Each entry: {id, at_step | (after + when), place_boundary:
+    # {ahead_mm, approach_angle_deg, ring_width_mm}, pieces: {...}}.
+    # `at: activation` is resolved to a concrete at_step by the HARNESS
+    # two-pass (the simulator never guesses activation).
+    world_events: list = field(default_factory=list)
 
     @classmethod
     def from_playground_card(cls, card: dict[str, Any],
@@ -397,6 +410,8 @@ class PlaygroundContext:
 
         robot = card.get("robot", {})
         robot_width_mm = float(robot.get("width_mm", 50.8))
+        contact_forward_reach_mm = float(
+            robot.get("contact_forward_reach_mm", 0.0) or 0.0)
 
         # Field boundary polygon (inner edge of red ring — where down_eye fires).
         # Preferred: explicit field_boundary.polygon_mm section.
@@ -471,12 +486,15 @@ class PlaygroundContext:
             objects=objects,
             regions=regions,
             robot_width_mm=robot_width_mm,
+            contact_forward_reach_mm=contact_forward_reach_mm,
             field_hex_vertices=field_hex_vertices,
             field_boundary_color=field_boundary_color,
             color_zones=color_zones,
             sensor_specs=dict((robot_card or {}).get("sensors") or {}),
             pieces=pieces,
             testcase_physics=dict(card.get("testcase_physics") or {}),
+            world_events=[dict(e) for e in (card.get("world_events") or [])
+                          if isinstance(e, dict)],
             execution_budget_blocks=int(
                 (card.get("simulation") or {}).get("execution_budget_blocks") or 0),
         )
@@ -496,6 +514,19 @@ _FOREVER_UNROLL = 20             # iterations for forever / repeat-until loops (
 # headroom and bounds worst-case sim time to ~1s. Card-overridable via
 # `simulation: {execution_budget_blocks: N}` in the playground card.
 _EXECUTION_BUDGET_BLOCKS = 50_000
+# Path-step emission granularity for CLOCK-MARCHED continuous motion
+# (OI-28 amendment 3, 2026-08-28). Under the 60Hz loop clock a marched
+# 1,000mm drive would emit ~244 PathSteps (one per 16.6ms tick) where it
+# emits 1 today, and indicators / timeline / slice_sim_result / coverage /
+# the viz walkthrough were written against paths of tens of steps.
+# Sensors, contact, coverage and hat latching are still evaluated per
+# SLICE inside _move; only the PathStep stream is coarse — consecutive
+# marched slices of the same block merge until the robot has travelled
+# _MARCH_STEP_MM or turned _MARCH_STEP_DEG from the emitted anchor
+# (~20 steps per marched metre). Blocking *_for moves are never
+# coalesced: they are discrete authored commands.
+_MARCH_STEP_MM = 50.0            # matches the _HAT_SAMPLE_MM latch grain
+_MARCH_STEP_DEG = 5.0
 # Calibrated 2026-08-19 (OI-16, data/screenshot_velocitytest2): two-duration
 # drive runs cancel ramp/stop-latency — cruise 494 mm/s at the 50% default,
 # 9.88 mm/s per %; turns 201°/s (50%) / 420°/s (100%), 4.16 °/s per %; linear
@@ -609,6 +640,19 @@ class SimulationResult:
     # Reporter block types _eval_expression could not evaluate (returned 0).
     # RECORDED, never raised — raising is population-changing (§15.1).
     unknown_reporter_blocks: list = field(default_factory=list)
+    # Provenance for the unmodeled_construct_defaulted flag (reviewer-ruled
+    # 2026-08-31, OI-31 sub-decision 1): every place the simulator
+    # substituted a neutral default for something it does not model —
+    # "reporter:<bt>", "statement:<bt>", "<bt>.<FIELD>=<value>". Detail is
+    # a RESULT FIELD; only the general flag reaches the masks (the
+    # motions_superseded precedent).
+    unmodeled_constructs: list = field(default_factory=list)
+    # World-event firing log (boundary family Phase 2, 2026-08-31):
+    # one entry per FIRED event — (step, event_id, edge_p1, edge_p2) with
+    # edge points as (x, y) mm of the placed boundary edge (None for a
+    # pieces-only event). The harness reads this for encounter/retreat
+    # abstention tests; events that never fired are absent.
+    world_event_log: list = field(default_factory=list)
 
     # ---- Task 3 (hat execution fidelity), additive ---- #
     # Program-level execution-fidelity flags set during simulation:
@@ -637,6 +681,11 @@ class SimulationResult:
     # ruling): from this step on the target's position is STALE and sensor
     # readings against it carry the sensor_reading_stale flag.
     object_contacts: dict = field(default_factory=dict)
+    # Construct-separability build (2026-09-05): target id -> step of the
+    # FIRST TRUE movable-target sensing evaluation (distance cone,
+    # front-eye cone, down-eye body, bumper). Additive provenance field —
+    # anchors the task-semantic `acquire` seam; no behavior change.
+    first_target_detect: dict = field(default_factory=dict)
     # ---- Sensing build (Phase 5, 2026-08-19), additive ---- #
     # Testcase push model only: piece id -> step its centre crossed the
     # island edge (cleared). Always empty in the main sim.
@@ -645,6 +694,14 @@ class SimulationResult:
     # piece id -> (x, y) at materialization (activation position — the
     # anchor for navigate-to measurements; push may move the piece later).
     piece_positions: dict = field(default_factory=dict)
+    # ---- Battery build (directive 2026-08-27), additive ---- #
+    # piece id -> (x, y) last known centre (cleared pieces keep their
+    # clear-step position; pieces_cleared marks them). Main sim: echoes
+    # the materialization positions.
+    piece_final_positions: dict = field(default_factory=dict)
+    # (step, piece_id, x, y) for every materialization and push re-pin —
+    # the battery viz animation source. Empty in the main sim.
+    piece_position_trace: list = field(default_factory=list)
     # block_id -> (first evaluation step, block_type) for sensing reporters —
     # the baseline run's trace that Option A materialization timing reads.
     sensor_first_eval: dict = field(default_factory=dict)
@@ -670,11 +727,21 @@ class SimulationResult:
     # marker must not poison either.
     scheduler: str = "sequential"
     # VR-Seq spec delta (2026-08-26): superseded_motion is MEASURED
-    # (truncate_and_resume), so these are provenance/diagnostic counts, NOT
+    # (truncate_and_resume) — re-verified by the reviewer's two-thread
+    # contention probe 2026-09-04 (drive_for 3000 preempted at 1s by a
+    # turn_for from the other thread: aborts at ~490mm and the thread
+    # resumes IMMEDIATELY, before the preemptor finishes; our replay 494mm
+    # vs VR 490-510, ±20mm VR frame-timing jitter on the preemptor's
+    # endpoint). These are provenance/diagnostic counts, NOT
     # conditional-evidence markers — result fields for the same reason as
     # `scheduler`; evidence touching such runs is full-tier.
     motions_superseded: int = 0
     drivetrain_contentions: int = 0
+    # How many times a nondeterministic value (pg_operator_random) was
+    # substituted with its range midpoint. Provenance count, NOT a flag —
+    # the uncertainty travels on `nondeterministic_variable`. A high count
+    # means the divergence compounded over many independent real draws.
+    nondeterministic_draws: int = 0
     # A3 rotation build (2026-08-26): final cumulative drive rotation
     # (VEX convention, CW-positive, 0 at spawn)
     drive_rotation_deg: float = 0.0
@@ -1009,36 +1076,40 @@ class _Sequencer:
             park.magnitude = max(0.0, park.magnitude - mag)
             sim._current_thread_idx = None
             return
-        # continuous pending motion
-        if cond_owner is not None:
-            attr = cond_owner.park.block
+        # continuous pending motion — the marched path (OI-28): slices here
+        # can be per-tick under the loop clock, so their path steps coalesce
+        # (_MARCH_STEP_MM/_DEG); sensors/contact/coverage still run per slice.
+        sim._marching = True
+        try:
+            if cond_owner is not None:
+                attr = cond_owner.park.block
+                if mode == "drive":
+                    sim._move(sign * self._velocity("drive") * dt, attr)
+                else:
+                    sim.sim_time_s += dt
+                    sim.timer_s += dt
+                    sim.heading = (sim.heading
+                                   + sign * self._velocity("turn") * dt) % 360
+                    sim.drive_rotation_deg -= sign * self._velocity("turn") * dt
+                    sim._emit_marched_step(attr)
+                return
+            waiters = [t for t in self.threads if t.status == _PARKED_TIME]
+            attr_block = (min(waiters, key=lambda t: t.wake_remaining).park.block
+                          if waiters else
+                          (sim.pending_drive_block if mode == "drive"
+                           else sim.pending_turn_block))
+            sim.sim_time_s += dt
+            sim.timer_s += dt
             if mode == "drive":
-                sim._move(sign * self._velocity("drive") * dt, attr)
+                sim._move(sign * self._velocity("drive") * dt, attr_block,
+                          add_time=False)
             else:
-                sim.sim_time_s += dt
-                sim.timer_s += dt
                 sim.heading = (sim.heading
                                + sign * self._velocity("turn") * dt) % 360
                 sim.drive_rotation_deg -= sign * self._velocity("turn") * dt
-                sim._record_step(attr)
-                sim.step += 1
-            return
-        waiters = [t for t in self.threads if t.status == _PARKED_TIME]
-        attr_block = (min(waiters, key=lambda t: t.wake_remaining).park.block
-                      if waiters else
-                      (sim.pending_drive_block if mode == "drive"
-                       else sim.pending_turn_block))
-        sim.sim_time_s += dt
-        sim.timer_s += dt
-        if mode == "drive":
-            sim._move(sign * self._velocity("drive") * dt, attr_block,
-                      add_time=False)
-        else:
-            sim.heading = (sim.heading
-                           + sign * self._velocity("turn") * dt) % 360
-            sim.drive_rotation_deg -= sign * self._velocity("turn") * dt
-            sim._record_step(attr_block)
-            sim.step += 1
+                sim._emit_marched_step(attr_block)
+        finally:
+            sim._marching = False
 
     def _gate_cond(self, t) -> None:
         """Throw _CondUnmet into the parked generator — its wait_until
@@ -1082,6 +1153,7 @@ def simulate_path(
     thread_start_order: str = "document",   # "document" | "reverse_document"
     time_budget_s: "float | None" = None,   # wall-clock budget (observed run_duration)
     movable_predicates: "str | None" = None,   # bracketing: None|"floor"|"ceiling"
+    random_policy: str = "sampled",   # "sampled"|"midpoint"|"low"|"high"
 ) -> SimulationResult:
     """Simulate robot movement for a BlockProgram on a given playground.
 
@@ -1103,7 +1175,14 @@ def simulate_path(
     Returns:
         SimulationResult with full path trace and derived metrics.
     """
-    sim = _Simulator(context)
+    # Seed the nondeterministic-value generator from the PROGRAM ID, not the
+    # clock: identical inputs must replay identically (frozen fixtures, pins),
+    # and a scenario's baseline / with-pieces runs — and the battery's two
+    # budgets — must draw the SAME sequence so their comparison measures the
+    # program, not our sampling. zlib.crc32, never hash(): str hashing is
+    # salted per process, which would make every session differ.
+    _seed = _zlib.crc32((getattr(program, "program_id", "") or "").encode())
+    sim = _Simulator(context, random_seed=_seed, random_policy=random_policy)
     # Part A (task 3): broadcast receivers execute inline at their broadcast
     # site, keyed on BROADCAST_OPTION — never in the top-level document-order
     # loop (that would run them twice, or at the wrong time).
@@ -1176,10 +1255,13 @@ def simulate_path(
             sim.pending_sensor_hats.append(root)
             continue
         if root.block_type not in _TRUSTED_HATS:
+            # OI-26 (2026-08-31): the `loses` variant joins the deferral
+            # model — probe-pinned negative edge of the same cone predicate.
+            # trigger_unfaithful retires for modeled eyes entirely.
             is_modeled_eye = (root.block_type == _HAT_EYE
                               and has_front_eye_model
                               and (root.get_field("OPTIONS") or "detects").lower()
-                              == "detects")
+                              in ("detects", "loses"))
             # Phase 4 (2026-08-19): bumper hats with mount geometry in the
             # robot card defer like eye hats — fire at first modeled contact.
             is_modeled_bumper = (root.block_type == _HAT_BUMPER
@@ -1206,12 +1288,38 @@ def simulate_path(
     if movable_predicates not in (None, "floor", "ceiling"):
         raise ValueError(f"unknown movable_predicates {movable_predicates!r}")
     sim.movable_predicates = movable_predicates
+    if loop_iteration_time_s > 0 and scheduler != "cooperative":
+        # OI-28: the loop clock is implemented as a back-edge TIME PARK
+        # consumed by the cooperative Sequencer (_advance_clock ->
+        # _commit_slice), which is the one place that turns elapsed time
+        # into displacement. Sequential mode has no Sequencer, so a
+        # sequential clock would need a SECOND implementation of "time
+        # passes" — exactly the divergence that caused the marching
+        # defect. Fail loudly instead; cooperative is the card default.
+        raise ValueError("loop_iteration_time_s requires scheduler="
+                         "'cooperative' (OI-28)")
     if loop_iteration_time_s > 0 and time_budget_s is not None:
         # measured-clock mode (reviewer directive 2026-08-26): the wall-clock
         # budget REPLACES the arbitrary unroll caps — loops run until the
         # observed run duration (or the 50k block budget) stops them
         sim.forever_unroll = 10**9
         sim.max_unroll = 10**9
+        # OI-28 cap semantics: with the budget governing, the unroll cap is
+        # not what stopped the loop, so loop_was_capped must NOT be set —
+        # budget stops carry their own `time_budget_exhausted` flag. Never
+        # repurpose a flag (house rule): a capped run and a
+        # budget-exhausted run are different uncertainty statements.
+        sim.budget_mode = True
+    elif loop_iteration_time_s > 0:
+        # OI-28 hardening (2026-08-28): the clock WITHOUT a budget leaves
+        # the arbitrary unroll caps governing, so loops truncate at 20
+        # while the clock ticks — the timing of the iterations that ran is
+        # right, but the run is cut short and its clock stops early
+        # (timer hats / timer_value see a truncated world). loop_was_capped
+        # already marks the truncation; this names the CONFIGURATION so the
+        # analysis layer's flags-empty masks can see it. Faithful loop
+        # counts need budget mode.
+        sim._flag("loop_clock_without_budget")
     try:
         if scheduler == "cooperative":
             # VR-Seq Stage 2: one thread per executable stack, round-robin
@@ -1446,6 +1554,8 @@ def slice_sim_result(
                         if path_start <= cs < path_end],
         simulator_status_by_block_type=dict(full_result.simulator_status_by_block_type),
         unknown_reporter_blocks=list(full_result.unknown_reporter_blocks),
+        unmodeled_constructs=list(full_result.unmodeled_constructs),
+        world_event_log=list(full_result.world_event_log),
         net_displacement_from_spawn=net_displacement,
         exits_field_boundary=full_result.exits_field_boundary,
         origin_x=origin_x,
@@ -2042,7 +2152,20 @@ from ..parsing.block_program import BlockNode, BlockProgram, MAGNET_BLOCK_TYPES,
 
 
 class _Simulator:
-    def __init__(self, context: PlaygroundContext):
+    def __init__(self, context: PlaygroundContext,
+                 random_seed: int = 0, random_policy: str = "sampled"):
+        # Nondeterministic-value policy (2026-08-28). "sampled" draws a NEW
+        # value per evaluation from a SEEDED generator: the student's block
+        # re-draws on every loop iteration, so a single substituted constant
+        # misrepresents the behaviour. Seeding keeps replay identity — the
+        # same program always produces the same sequence, so pins hold and,
+        # critically, a battery scenario's baseline and with-pieces runs draw
+        # the SAME values (otherwise behavioral_divergence would measure our
+        # own noise instead of the program's response to the pieces).
+        # "midpoint" is the pre-2026-08-28 behaviour, retained for
+        # attribution and for bracketing a run across the range.
+        self._rng = _random.Random(random_seed)
+        self.random_policy = random_policy
         self.ctx = context
         self.x = context.spawn_x
         self.y = context.spawn_y
@@ -2080,6 +2203,7 @@ class _Simulator:
         self.loop_was_capped = False
         self.loop_cap_steps: list[int] = []      # stage 0b: per-span fidelity
         self.unknown_reporter_blocks: list[str] = []   # stage 0b: recorded, not raised
+        self.unmodeled_constructs: list[str] = []      # OI-31: flag provenance
 
         # Task 3 Part A: inline broadcast execution
         self.receivers: dict[str, list] = {}     # BROADCAST_OPTION -> receiver stacks
@@ -2089,15 +2213,23 @@ class _Simulator:
         # synchronously — a stall or forever inside the body faithfully
         # stalls/stops the caller.
         self.procedures: dict[str, object] = {}
-        self._active_procs: set[tuple] = set()      # recursion guard
+        self._active_procs: set[str] = set()      # recursion guard
         self.execution_flags: list[str] = []      # program-level fidelity flags
         self.fabricated_steps: list[int] = []     # Part D: fallback-motion steps
         self.color_detections: list[tuple] = []   # sensing: (step, eye, color) True-evals
 
         # Sensing build Phase 2 (2026-08-19)
         self.object_contacts: dict[str, int] = {}  # target id -> first contact step
+        self.first_target_detect: dict[str, int] = {}  # target id -> first sensed step
         self.pending_sensor_hats: list = []           # deferred sensor-hat stacks (fire on detection)
         self._sensor_hats_latched: set = set()        # hats with a mid-move false->true transition
+        # OI-26 (2026-08-31): per-hat prior-acquisition latch for the
+        # `loses` variant — reviewer-probed: the hat NEVER fires from
+        # "nothing in view" (Probe A silent); it fires on the true->false
+        # transition of the cone predicate AFTER an acquisition (the
+        # drive-through probe), and RE-ARMS per acquire->lose cycle (the
+        # 2,500mm follow-up: one fire per cycle).
+        self._hat_acquired: set = set()
         self._hat_prev_state: dict = {}               # id(hat) -> condition at last check
         self.sensor_hats_fired: dict = {}             # hat block_id -> [fire/restart steps]
         self._in_sensor_hat = False                   # reentrancy guard
@@ -2113,8 +2245,20 @@ class _Simulator:
         self._sequencer = None
         self._current_thread_idx = None               # cooperative: thread index
         self.loop_iteration_time_s = 0.0              # deferred wall clock (spec §8)
+        # OI-28 (2026-08-28): True while _commit_slice is marching
+        # CONTINUOUS motion under the clock — the only motion that emits
+        # per-tick slices, and so the only motion whose path steps are
+        # coalesced (_MARCH_STEP_MM/_DEG). Blocking *_for moves are
+        # untouched. _march_anchor is the pose of the last emitted
+        # marched step: (x, y, heading, block_id).
+        self._marching = False
+        self._march_anchor = None
+        # OI-28: True when a wall-clock budget replaced the unroll caps —
+        # the caps then do not govern, so loop_was_capped is not set.
+        self.budget_mode = False
         self.motions_superseded = 0                   # measured-policy provenance
         self.drivetrain_contentions = 0
+        self.nondeterministic_draws = 0
         self.time_budget_s = None                     # observed-run wall budget
         # Predicate bracketing (§12.4/G-close-out step 2, 2026-08-26):
         # None = model; "floor" = movable targets undetectable after first
@@ -2135,11 +2279,39 @@ class _Simulator:
         # unless the card's testcase_physics section enables it.
         tp = context.testcase_physics or {}
         self.push_model: str | None = tp.get("push_model")
+        if self.push_model == "kinematic_graze":
+            self.push_model = "kinematic"   # graze is a kinematic variant
         # The push model MUTATES piece positions — isolate copies per run.
         self.live_pieces: list[ObjectRef] = (
             [_copy.copy(p) for p in context.pieces] if self.push_model
             else list(context.pieces))
         self.pieces_cleared: dict[str, int] = {}   # piece id -> step pushed off
+        # Piece START positions for the displacement clear rule (2026-09-02
+        # prototype): net displacement from here decides clearing. Seeded
+        # for already-active pieces; relative pieces add theirs at
+        # materialization.
+        self._piece_start: dict[str, tuple] = {}
+        # Full-extension clear tolerance (directive 2026-08-27; OI-27 ruled
+        # 2026-08-28): a piece is cleared once its centre clearance past the
+        # boundary reaches the bar. FRACTION semantics (the ruling, radius-
+        # proportional — "generous given the physics we are not simulating"):
+        # bar = clear_extension_fraction * body_radius. ABSOLUTE fallback:
+        # bar = body_radius - clear_tolerance_mm. Card-declared per scenario;
+        # fraction wins when both are present.
+        self.clear_tolerance_mm: float = float(tp.get("clear_tolerance_mm") or 0.0)
+        _cef = tp.get("clear_extension_fraction")
+        # Prototype flags (2026-09-02): graze push + displacement clear.
+        self.graze_push: bool = str(tp.get("push_model") or "") == "kinematic_graze"
+        self.clear_rule: str = str(tp.get("clear_rule") or "extension")
+        self.clear_displacement_mm: float = float(
+            tp.get("clear_displacement_mm") or 0.0)
+        self.clear_slip_margin_mm: float = float(
+            tp.get("clear_slip_margin_mm") or 0.0)
+        self.clear_extension_fraction: float | None = (
+            float(_cef) if _cef is not None else None)
+        # (step, piece_id, x, y) — every materialization and re-pin; feeds
+        # the battery viz. Empty in the main sim (push never runs there).
+        self.piece_position_trace: list = []
         self.forever_unroll: int = int(tp.get("loop_unroll") or _FOREVER_UNROLL)
         # Faithful forever nesting (reviewer ruling 2026-08-24, OI-24): a
         # forever NEVER exits in reality (absent break), so once an inner
@@ -2165,8 +2337,19 @@ class _Simulator:
         self.piece_positions: dict[str, tuple[float, float]] = {
             p.object_id: (p.x, p.y) for p in self.live_pieces
             if p.object_id not in self._pending_piece_ids}
+        self._piece_start = {
+            p.object_id: (p.x, p.y) for p in self.live_pieces
+            if p.object_id not in self._pending_piece_ids}
         self.sensor_first_eval: dict[str, tuple[int, str]] = {}
-        self._maybe_activate_pieces()
+        # Scheduled world events (boundary family Phase 2): pending in card
+        # order; fired ids map to their placed-edge geometry for the retreat
+        # trigger. Only events with a concrete at_step are eligible — the
+        # harness resolves `at: activation` before the run.
+        self._pending_world_events: list[dict] = [
+            dict(e) for e in context.world_events]
+        self._fired_world_events: dict[str, dict] = {}
+        self.world_event_log: list = []
+        self._advance_world()
 
         # Movement tracking — used to guard sensor-conditioned if_then branches.
         # Position-dependent sensors (optical, bumper, distance) cannot fire at
@@ -2208,20 +2391,84 @@ class _Simulator:
         if name not in self.execution_flags:
             self.execution_flags.append(name)
 
-    def _loop_tick(self, iter_start_time: float) -> None:
-        """60Hz loop clock (measured 60.15Hz, SCHEDULING_MODEL §11): VEX's
-        forked control blocks give every loop iteration a 5ms stack timer +
-        requestRedraw, rate-limiting to ~one iteration per tick. When
-        enabled, top an iteration's elapsed time up to the tick floor —
-        iterations whose body already consumed >= a tick (motion, waits)
-        cost nothing extra."""
+    def _unmodeled(self, token: str) -> None:
+        """Degrade-with-a-named-flag for constructs the simulator does not
+        model (reviewer-ruled 2026-08-31, OI-31): ONE general flag,
+        `unmodeled_construct_defaulted`, wherever a neutral default is
+        substituted — an unrecognized reporter block, an unrecognized
+        statement block, or an unrecognized field VALUE inside a recognized
+        block. The token ("reporter:<bt>", "statement:<bt>",
+        "<bt>.<FIELD>=<value>") is provenance and stays a result field.
+        Deliberately NOT fired for constructs whose default is ruled
+        faithful: comments, the pg_looks_ family (capabilities.yaml:
+        faithful no-op), and pg_sensing_optical_brightness (foreign in
+        CCP, ruled not worth modeling — profile-side flags it
+        foreign_playground_block)."""
+        if token not in self.unmodeled_constructs:
+            self.unmodeled_constructs.append(token)
+        self._flag("unmodeled_construct_defaulted")
+
+    def _loop_tick_park(self, iter_start_time: float, block):
+        """Loop clock: VEX's forked control blocks give every loop iteration
+        a 5ms stack timer + requestRedraw, rate-limiting to ~one iteration
+        per frame tick. FRAME = 1/60 (16.667ms), the scratch-vm source
+        constant, CONFIRMED four ways by the B1/B2 probe series (blocks
+        mode, 2026-08-28: 16.626, 16.664, 16.62, 17.00 ms; noise floor
+        ~±0.4ms). Ordinary blocks cost ~zero — an increment block inside
+        the frame measured 16.62ms — so the frame alone is modelled, with
+        no per-block term (`print` costs ~0.8ms: real, ~2x noise, rare in
+        tight loops; noted, deliberately not modelled). The caller
+        supplies the value.
+
+        OI-28 (2026-08-28) — THE UNIFICATION. This returns a TIME PARK for
+        the tick's unconsumed remainder instead of advancing the clock
+        itself. The old `_loop_tick` added to sim_time_s/timer_s directly,
+        bypassing the Sequencer's _advance_clock/_commit_slice — so
+        simulated time passed with motion armed and produced NO
+        displacement (`forever { … else drive }` froze, then exited the
+        field inside fabricated runoff that evaluates no conditions).
+        Parking makes the back-edge use the SAME path as `wait`:
+        _commit_slice marches any armed motion through _move, so sensors,
+        hats and the kinematic push all see it. One implementation of
+        "time passes", one invariant: any advance of simulated time with
+        motion armed produces displacement.
+
+        Returns None — a bare back-edge yield, byte-identical to the
+        pre-clock behaviour — when the clock is off, or when the body
+        already consumed a full tick (motion/waits are never
+        double-charged)."""
         if self.loop_iteration_time_s <= 0:
+            return None
+        remainder = self.loop_iteration_time_s - (self.sim_time_s - iter_start_time)
+        if remainder <= 1e-12:
+            return None
+        return _Park("time", block, seconds=remainder)
+
+    def _should_coalesce(self, block) -> bool:
+        """OI-28 amendment 3: is this marched slice close enough to the
+        last emitted step (same block, under the travel/turn grain) to
+        merge into it rather than emit a new PathStep?"""
+        if not self.path or self._march_anchor is None:
+            return False
+        ax, ay, ah, a_block = self._march_anchor
+        if a_block != block.block_id or self.path[-1].block_id != block.block_id:
+            return False
+        if _dist(self.x, self.y, ax, ay) >= _MARCH_STEP_MM:
+            return False
+        return abs((self.heading - ah + 180.0) % 360.0 - 180.0) < _MARCH_STEP_DEG
+
+    def _emit_marched_step(self, block, traversed_regions=None) -> None:
+        """Path-step emission for a clock-marched slice: merge into the
+        previous step while within the grain, else emit and re-anchor.
+        The step counter only advances on a real emission, so every
+        recorded step index stays a valid path index."""
+        if self._should_coalesce(block):
+            self._record_step(block, traversed_regions=traversed_regions,
+                              replace_last=True)
             return
-        elapsed = self.sim_time_s - iter_start_time
-        if elapsed < self.loop_iteration_time_s:
-            top_up = self.loop_iteration_time_s - elapsed
-            self.sim_time_s += top_up
-            self.timer_s += top_up
+        self._record_step(block, traversed_regions=traversed_regions)
+        self._march_anchor = (self.x, self.y, self.heading, block.block_id)
+        self.step += 1
 
     def _coop(self) -> bool:
         """True when the executing code should PARK on the Sequencer rather
@@ -2239,6 +2486,146 @@ class _Simulator:
         while current is not None:
             yield from self.execute_block(current)
             current = current.next
+
+    def _advance_world(self) -> None:
+        """THE step-gated world mutator — one implementation of "the world
+        changes", per the OI-28 unification lesson. Called from __init__ and
+        the top of execute_block; granularity is once per executed block.
+        Evaluates piece activation (Option A) and scheduled world events
+        (boundary family Phase 2) in that order."""
+        self._maybe_activate_pieces()
+        if self._pending_world_events:
+            self._maybe_fire_world_events()
+
+    def _maybe_fire_world_events(self) -> None:
+        """Fire scheduled world events whose conditions hold (in card order;
+        an event with `after:` waits for the named event, and `when:
+        {retreated_mm: X}` additionally waits until the robot is X mm from
+        the edge THAT event placed). Firing `place_boundary` rebuilds the
+        island polygon AND the down-eye red ring around the robot's current
+        pose — moving the boundary without the ring would test a boundary
+        the robot cannot see. Event pieces materialize relative to the same
+        pose, through the same ObjectRef machinery as Option A."""
+        # Track each fired edge's closest approach BEFORE readiness checks:
+        # `retreated_mm` is measured from wherever the robot got closest to
+        # the placed edge, not from the placement pose (which starts
+        # ahead_mm away — an absolute test would be trivially true and the
+        # repeat would cascade in the same call).
+        for rec in self._fired_world_events.values():
+            edge = rec.get("edge")
+            if edge is not None:
+                (ax, ay), (bx, by) = edge
+                d = _point_segment_dist(self.x, self.y, ax, ay, bx, by)
+                if d < rec["min_dist"]:
+                    rec["min_dist"] = d
+        still_pending = []
+        for ev in self._pending_world_events:
+            if not self._world_event_ready(ev):
+                still_pending.append(ev)
+                continue
+            self._fire_world_event(ev)
+        self._pending_world_events = still_pending
+
+    def _world_event_ready(self, ev: dict) -> bool:
+        after = ev.get("after")
+        if after is not None:
+            prior = self._fired_world_events.get(str(after))
+            if prior is None:
+                return False
+            cond = ev.get("when") or {}
+            retreat = cond.get("retreated_mm")
+            if retreat is not None:
+                edge = prior.get("edge")
+                if edge is None:
+                    return False
+                (ax, ay), (bx, by) = edge
+                d_now = _point_segment_dist(self.x, self.y, ax, ay, bx, by)
+                if d_now - prior["min_dist"] < float(retreat):
+                    return False
+        at_step = ev.get("at_step")
+        if at_step is None:
+            # `at: activation` unresolved (main-sim context or a harness
+            # baseline pass): the event is inert, by design.
+            return after is not None
+        return self.step >= int(at_step)
+
+    def _fire_world_event(self, ev: dict) -> None:
+        ev_id = str(ev.get("id") or f"event_{len(self._fired_world_events)}")
+        record: dict = {"step": self.step, "min_dist": float("inf")}
+        spec = ev.get("place_boundary")
+        if spec:
+            quad, inner, edge = self._relative_boundary_geometry(spec)
+            self.ctx.field_hex_vertices = quad
+            self.ctx.color_zones = (
+                [z for z in self.ctx.color_zones
+                 if not (z.color == "red" and z.eye == "down")]
+                + [ColorZone(color="red", eye="down",
+                             registers_as_object=True,
+                             band_inner_vertices=inner,
+                             band_outer_vertices=quad,
+                             description=f"world_event {ev_id} placed ring")])
+            record["edge"] = edge
+            (ax, ay), (bx, by) = edge
+            record["min_dist"] = _point_segment_dist(self.x, self.y,
+                                                     ax, ay, bx, by)
+        for pid, pspec in (ev.get("pieces") or {}).items():
+            rel = (pspec or {}).get("relative") or {}
+            ang = math.radians(self.heading
+                               + float(rel.get("bearing_deg") or 0.0))
+            ahead = float(rel.get("ahead_mm") or 0.0)
+            piece = ObjectRef(
+                object_id=str(pid),
+                x=self.x + ahead * math.cos(ang),
+                y=self.y + ahead * math.sin(ang),
+                tolerance=float(pspec.get("tolerance_mm") or 150.0),
+                object_type="target", movable=True,
+                body_radius_mm=float(pspec.get("body_radius_mm") or 100.0),
+                color=pspec.get("color"))
+            self.live_pieces.append(piece)
+            self.piece_positions[piece.object_id] = (piece.x, piece.y)
+            self._piece_start[piece.object_id] = (piece.x, piece.y)
+            self.piece_position_trace.append(
+                (self.step, piece.object_id, piece.x, piece.y))
+        self._fired_world_events[ev_id] = record
+        edge = record.get("edge")
+        self.world_event_log.append(
+            (self.step, ev_id,
+             edge[0] if edge else None, edge[1] if edge else None))
+
+    def _relative_boundary_geometry(self, spec: dict):
+        """Convex quadrilateral from the robot's CURRENT pose: an edge at
+        `ahead_mm` along the heading, rotated by `approach_angle_deg`
+        (0 = head-on), extending far laterally and behind so the robot is
+        contained by construction; plus the ring-band inner polygon at the
+        card-declared `ring_width_mm` inset (never hardcoded). Returns
+        (quad, inner_quad, (edge_p1, edge_p2))."""
+        ahead = float(spec["ahead_mm"])
+        angle = float(spec.get("approach_angle_deg") or 0.0)
+        ring = float(spec["ring_width_mm"])
+        h = math.radians(self.heading)
+        cx = self.x + ahead * math.cos(h)
+        cy = self.y + ahead * math.sin(h)
+        edge_dir = h + math.radians(90.0 + angle)
+        ex, ey = math.cos(edge_dir), math.sin(edge_dir)
+        half_len, depth = 6000.0, 9000.0
+        p1 = (cx + half_len * ex, cy + half_len * ey)
+        p2 = (cx - half_len * ex, cy - half_len * ey)
+        # inward normal: perpendicular to the edge, pointing at the robot
+        nx, ny = -ey, ex
+        if (self.x - cx) * nx + (self.y - cy) * ny < 0:
+            nx, ny = -nx, -ny
+        quad = [p1, p2,
+                (p2[0] + depth * nx, p2[1] + depth * ny),
+                (p1[0] + depth * nx, p1[1] + depth * ny)]
+        inner = [(p1[0] + ring * nx, p1[1] + ring * ny),
+                 (p2[0] + ring * nx, p2[1] + ring * ny),
+                 quad[2], quad[3]]
+        if not _point_in_convex_polygon(self.x, self.y, quad):
+            raise ValueError(
+                "world_event place_boundary does not contain the robot — "
+                f"pose ({self.x:.0f},{self.y:.0f}) hdg {self.heading:.0f}, "
+                f"spec {spec}")
+        return quad, inner, (p1, p2)
 
     def _maybe_activate_pieces(self) -> None:
         """Late materialization (Option A, reviewer-approved 2026-08-19):
@@ -2258,6 +2645,9 @@ class _Simulator:
                 piece.y = self.y + piece.rel_ahead_mm * math.sin(ang)
             self._pending_piece_ids.discard(piece.object_id)
             self.piece_positions[piece.object_id] = (piece.x, piece.y)
+            self._piece_start[piece.object_id] = (piece.x, piece.y)
+            self.piece_position_trace.append(
+                (self.step, piece.object_id, piece.x, piece.y))
 
     def _sensor_targets(self) -> "list[ObjectRef]":
         """Bodies sensors can currently perceive: named objects plus live
@@ -2288,7 +2678,21 @@ class _Simulator:
             return True
         if hat.block_type == _HAT_BUMPER:
             return self._bumper_pressed(hat.get_field("BUMPER") or "")
-        return self._eye_near_object(self._eye_from_block(hat))
+        sees = self._eye_near_object(self._eye_from_block(hat))
+        if (hat.get_field("OPTIONS") or "detects").lower() == "loses":
+            # OI-26 negative edge: the trigger STATE is "an acquired object
+            # is no longer seen", so the existing false->true edge machinery
+            # (between-blocks check, mid-move pre-scan latch, re-arm on
+            # re-entry, restart semantics) applies unchanged — one
+            # implementation for both variants. Seeing updates the
+            # acquisition latch and reads False; losing after acquisition
+            # reads True (one edge until the next re-acquisition).
+            key = id(hat)
+            if sees:
+                self._hat_acquired.add(key)
+                return False
+            return key in self._hat_acquired
+        return sees
 
     def _bumper_pressed(self, selector: str) -> bool:
         if self.movable_predicates == "ceiling" \
@@ -2326,7 +2730,8 @@ class _Simulator:
                         self._flag("sensor_model_assumed")
                     contact = self.object_contacts.get(target.object_id)
                     if target.movable and contact is not None and contact < self.step:
-                        self._flag("sensor_reading_stale")
+                        self._flag_stale()
+                    self._note_target_detect(target)
                     return True
         return False
 
@@ -2443,7 +2848,7 @@ class _Simulator:
             # here — halt everything, no terminal runoff (like a stop)
             self._flag("time_budget_exhausted")
             raise _BudgetSignal()
-        self._maybe_activate_pieces()
+        self._advance_world()
         self.fire_ready_sensor_hats()
         bt = block.block_type
 
@@ -2475,24 +2880,18 @@ class _Simulator:
             # 123456789.  Unclamped, `inf` persists in simulator state and
             # `inf * 0` (a zero-length wait) yields NaN, which silently poisons
             # every downstream metric rather than producing a large number.
-            raw_pct = self._get_numeric(block, "VELOCITY")
-            if raw_pct == 0:
-                self._flag("zero_velocity_assumed")
-            pct = _clamp_percent(raw_pct or 50.0)
+            pct = _clamp_percent(self._get_numeric(block, "VELOCITY") or 50.0)
             self.drive_velocity_mm_per_s = pct * 9.88  # calibrated 2026-08-19 (OI-16)
             return
 
         if bt == "pg_drivetrain_set_turn_velocity":
-            raw_pct = self._get_numeric(block, "VELOCITY")
-            if raw_pct == 0:
-                self._flag("zero_velocity_assumed")
-            pct = _clamp_percent(raw_pct or 50.0)
+            pct = _clamp_percent(self._get_numeric(block, "VELOCITY") or 50.0)
             self.turn_velocity_deg_per_s = pct * 4.16  # calibrated 2026-08-19 (OI-16)
             return
 
         # ---- Drive for distance ----
         if bt == "pg_drivetrain_drive_for":
-            self._clear_pending_motion()
+            self._takeover_pending()
             direction = (block.get_field("DIRECTION") or "fwd").lower()
             dist_mm = self._get_discrete(block, "AMOUNT")
             units = block.get_field("UNITS") or "mm"
@@ -2501,7 +2900,7 @@ class _Simulator:
                 dist_mm = -dist_mm
             if self._coop():
                 # VR-Seq: blocking motion parks the thread (STATUS_PROMISE_WAIT)
-                self._clear_pending_motion()
+                self._takeover_pending()
                 self._sequencer.notify_drivetrain_command()
                 yield _Park("motion", block, mode="drive",
                             sign=1.0 if dist_mm >= 0 else -1.0,
@@ -2522,7 +2921,13 @@ class _Simulator:
             # command clears it, instant blocks pass through leaving it armed.
             # Pending still armed at normal program end = the robot drives
             # indefinitely until failure (finish_pending_motion).
-            self._clear_pending_motion()
+            if self.pending_drive_dir == sign:
+                # Re-issuing the same continuous drive is a no-op in VR:
+                # leave it armed (coarse tick marching continues) — no
+                # takeover frame, no per-iteration path step.
+                self.pending_drive_block = block
+                return
+            self._takeover_pending()
             if self._coop():
                 self._sequencer.notify_drivetrain_command()
             self.pending_drive_dir = sign
@@ -2539,7 +2944,10 @@ class _Simulator:
             # drivetrain command clears it, instant blocks leave it armed.
             # Pending still armed at normal program end -> nominal 90°
             # fallback (finish_pending_motion).
-            self._clear_pending_motion()
+            if self.pending_turn_dir == sign:
+                self.pending_turn_block = block
+                return
+            self._takeover_pending()
             if self._coop():
                 self._sequencer.notify_drivetrain_command()
             self.pending_turn_dir = sign
@@ -2578,7 +2986,7 @@ class _Simulator:
 
         # ---- Turn by angle ----
         if bt == "pg_drivetrain_turn_for":
-            self._clear_pending_motion()
+            self._takeover_pending()
             turn_dir = (block.get_field("TURNDIRECTION") or "right").lower()
             angle = self._get_discrete(block, "AMOUNT")
             units = block.get_field("UNITS") or "deg"
@@ -2609,17 +3017,13 @@ class _Simulator:
         # ---- Turn to absolute heading ----
         # ---- Turn to an absolute heading ----
         if bt == "pg_drivetrain_turn_to_heading":
-            self._clear_pending_motion()
+            self._takeover_pending()
             card_heading = self._get_discrete(block, "HEADING", "ANGLE", "AMOUNT")
             target = card_heading_to_math(card_heading)
             # A3 rotation build (2026-08-26): the turn takes TIME — the
             # shortest-path delta at the calibrated turn velocity (was
             # instant; contaminated the duration channel for 530 runs)
             delta = (target - self.heading + 180.0) % 360.0 - 180.0
-            if self._coop():
-                self._sequencer.notify_drivetrain_command()
-                yield _Park("motion", block, mode="turn", sign=1.0 if delta >= 0 else -1.0, magnitude=abs(delta))
-                return
             dt = abs(delta) / max(self.turn_velocity_deg_per_s, 1e-9)
             self.sim_time_s += dt
             self.timer_s += dt
@@ -2638,7 +3042,7 @@ class _Simulator:
         # reduced modulo 360.  The distinction would matter for elapsed time and
         # for the `drive rotation` sensor, neither of which is modelled yet.
         if bt == "pg_drivetrain_turn_to_rotation":
-            self._clear_pending_motion()
+            self._takeover_pending()
             rotation = self._get_discrete(block, "ROTATION", "AMOUNT", "ANGLE")
             # A3 rotation build (2026-08-26): rotation is CUMULATIVE (CW+,
             # 0 at spawn) — the turn magnitude is the delta from the
@@ -2647,10 +3051,6 @@ class _Simulator:
             # to the legacy form (spawn is VEX heading 0, so the absolute
             # and spawn-relative readings coincide — attribution note).
             delta_vex = rotation - self.drive_rotation_deg
-            if self._coop():
-                self._sequencer.notify_drivetrain_command()
-                yield _Park("motion", block, mode="turn", sign=-1.0 if delta_vex >= 0 else 1.0, magnitude=abs(delta_vex))
-                return
             dt = abs(delta_vex) / max(self.turn_velocity_deg_per_s, 1e-9)
             self.sim_time_s += dt
             self.timer_s += dt
@@ -2668,12 +3068,12 @@ class _Simulator:
         # "Sets the gyro's current heading to a specified value".
         if bt in ("pg_drivetrain_set_heading", "pg_drivetrain_set_drive_heading",
                   "pg_drivetrain_set_drive_rotation"):
-            self._clear_pending_motion()
+            self._takeover_pending()
             return
 
         # ---- Stop ----
         if bt in ("pg_drivetrain_stop", "pg_drivetrain_stop_driving"):
-            self._clear_pending_motion()
+            self._takeover_pending()
             if self._coop():
                 self._sequencer.notify_drivetrain_command()
             self._record_step(block)
@@ -2723,17 +3123,16 @@ class _Simulator:
                 # mutation was unreadable) — no-op, named flag
                 self._flag("procedure_undefined")
                 return
-            call_key = (self._current_thread_idx, name)
-            if call_key in self._active_procs:
+            if name in self._active_procs:
                 # VEX would recurse; unrolling recursion needs a depth model
                 # we don't have — suppress the nested call, flag it
                 self._flag("procedure_recursion_suppressed")
                 return
-            self._active_procs.add(call_key)
+            self._active_procs.add(name)
             try:
                 yield from self.execute_stack(body)
             finally:
-                self._active_procs.discard(call_key)
+                self._active_procs.discard(name)
             return
         if bt in ("procedures_definition", "procedures_prototype"):
             return   # bodies execute only via their calls
@@ -2853,8 +3252,9 @@ class _Simulator:
 
         # ---- Loops ----
         if "forever" in bt:
-            self.loop_was_capped = True
-            self.loop_cap_steps.append(self.step)   # stage 0b: per-span fidelity
+            if not self.budget_mode:      # OI-28: budget governs, not the cap
+                self.loop_was_capped = True
+                self.loop_cap_steps.append(self.step)   # stage 0b: per-span fidelity
             broke = False
             for _ in range(self.forever_unroll):
                 _t0 = self.sim_time_s
@@ -2867,8 +3267,11 @@ class _Simulator:
                     self.loop_was_capped = False
                     broke = True
                     break
-                self._loop_tick(_t0)
-                yield   # VR-Seq: loop back-edge yield (scratch-vm rule)
+                # OI-28: the back-edge yields a TIME PARK for the tick
+                # remainder (None = bare yield when the clock is off), so
+                # _commit_slice marches any armed motion — see
+                # _loop_tick_park.
+                yield self._loop_tick_park(_t0, block)
                 if self._forever_completed:
                     break   # inner forever capped: this loop never re-iterates
             if not broke:
@@ -2882,8 +3285,9 @@ class _Simulator:
                 # forever in VEX VR (it does not hang). Same capped-forever
                 # treatment, including the nesting signal.
                 self._flag("nonfinite_numeric_clamped")
-                self.loop_was_capped = True
-                self.loop_cap_steps.append(self.step)
+                if not self.budget_mode:   # OI-28: budget governs, not the cap
+                    self.loop_was_capped = True
+                    self.loop_cap_steps.append(self.step)
                 broke = False
                 for _ in range(self.forever_unroll):
                     _t0 = self.sim_time_s
@@ -2896,14 +3300,17 @@ class _Simulator:
                         self.loop_was_capped = False
                         broke = True
                         break
-                    self._loop_tick(_t0)
-                    yield   # VR-Seq: loop back-edge yield
+                    # OI-28: the back-edge yields a TIME PARK for the tick
+                    # remainder (None = bare yield when the clock is off), so
+                    # _commit_slice marches any armed motion — see
+                    # _loop_tick_park.
+                    yield self._loop_tick_park(_t0, block)
                     if self._forever_completed:
                         break
                 if not broke:
                     self._forever_completed = True
                 return
-            raw_n = max(0, int(raw))
+            raw_n = int(raw or 1)
             n = min(raw_n, self.max_unroll)
             if raw_n > self.max_unroll:
                 self.loop_was_capped = True
@@ -2917,19 +3324,36 @@ class _Simulator:
                         yield from self.execute_stack(child)
                 except _BreakSignal:
                     break
-                self._loop_tick(_t0)
-                yield   # VR-Seq: loop back-edge yield
+                # OI-28: the back-edge yields a TIME PARK for the tick
+                # remainder (None = bare yield when the clock is off), so
+                # _commit_slice marches any armed motion — see
+                # _loop_tick_park.
+                yield self._loop_tick_park(_t0, block)
                 if self._forever_completed:
                     break   # faithful nesting: inner forever never returns
             return
 
         if "repeat_until" in bt:
+            # OI-28 (2026-08-28): the cap marking is OPTIMISTIC — set at
+            # entry, cleared if the condition is met. The cap STEP was
+            # never un-recorded on that exit, so a loop that finished
+            # normally still looked curtailed; under the clock these
+            # loops are entered thousands of times and the stray entries
+            # dominated the fidelity taxonomy's `capped` lane. Record the
+            # index so a normal exit can pop exactly this loop's entry
+            # (nested loops' entries are appended later and survive), and
+            # record nothing at all when a wall-clock budget governs.
             self.loop_was_capped = True
-            self.loop_cap_steps.append(self.step)   # stage 0b: per-span fidelity
+            _cap_idx = None
+            if not self.budget_mode:
+                _cap_idx = len(self.loop_cap_steps)
+                self.loop_cap_steps.append(self.step)   # stage 0b: per-span fidelity
             for _ in range(self.forever_unroll):
                 cond = bool(self._eval_expression(block.values[0])) if block.values else False
                 if cond:
                     self.loop_was_capped = False
+                    if _cap_idx is not None:
+                        self.loop_cap_steps.pop(_cap_idx)
                     break
                 _t0 = self.sim_time_s
                 self.loops_exercised[block.block_id] = self.loops_exercised.get(block.block_id, 0) + 1
@@ -2940,19 +3364,36 @@ class _Simulator:
                 except _BreakSignal:
                     self.loop_was_capped = False
                     break
-                self._loop_tick(_t0)
-                yield   # VR-Seq: loop back-edge yield
+                # OI-28: the back-edge yields a TIME PARK for the tick
+                # remainder (None = bare yield when the clock is off), so
+                # _commit_slice marches any armed motion — see
+                # _loop_tick_park.
+                yield self._loop_tick_park(_t0, block)
                 if self._forever_completed:
                     break   # faithful nesting: inner forever never returns
             return
 
         if "while" in bt:
+            # OI-28 (2026-08-28): the cap marking is OPTIMISTIC — set at
+            # entry, cleared if the condition is met. The cap STEP was
+            # never un-recorded on that exit, so a loop that finished
+            # normally still looked curtailed; under the clock these
+            # loops are entered thousands of times and the stray entries
+            # dominated the fidelity taxonomy's `capped` lane. Record the
+            # index so a normal exit can pop exactly this loop's entry
+            # (nested loops' entries are appended later and survive), and
+            # record nothing at all when a wall-clock budget governs.
             self.loop_was_capped = True
-            self.loop_cap_steps.append(self.step)   # stage 0b: per-span fidelity
+            _cap_idx = None
+            if not self.budget_mode:
+                _cap_idx = len(self.loop_cap_steps)
+                self.loop_cap_steps.append(self.step)   # stage 0b: per-span fidelity
             for _ in range(self.forever_unroll):
                 cond = bool(self._eval_expression(block.values[0])) if block.values else True
                 if not cond:
                     self.loop_was_capped = False
+                    if _cap_idx is not None:
+                        self.loop_cap_steps.pop(_cap_idx)
                     break
                 _t0 = self.sim_time_s
                 self.loops_exercised[block.block_id] = self.loops_exercised.get(block.block_id, 0) + 1
@@ -2963,8 +3404,11 @@ class _Simulator:
                 except _BreakSignal:
                     self.loop_was_capped = False
                     break
-                self._loop_tick(_t0)
-                yield   # VR-Seq: loop back-edge yield
+                # OI-28: the back-edge yields a TIME PARK for the tick
+                # remainder (None = bare yield when the clock is off), so
+                # _commit_slice marches any armed motion — see
+                # _loop_tick_park.
+                yield self._loop_tick_park(_t0, block)
                 if self._forever_completed:
                     break   # faithful nesting: inner forever never returns
             return
@@ -3032,10 +3476,15 @@ class _Simulator:
                 yield from self.execute_stack(block.children[-1])
             return
 
-        # Unknown statements must not be certified by a broad family prefix.
-        from ..parsing.block_registry import _simulator_status_map
-        if bt not in _simulator_status_map:
-            self._flag("unmodeled_blocks")
+        # ---- Unmodeled statement fallthrough (OI-31, 2026-08-31) ----
+        # A statement block matching NO section above silently did nothing.
+        # Declared-faithful no-ops stay silent: comments; the pg_looks_
+        # family (capabilities.yaml: invisible to motion, sensors, goals);
+        # hat/event roots (dispatched by the hat and broadcast machinery,
+        # not here). Everything else is a degradation and must say so.
+        if not (bt.startswith(("pg_looks_", "comment", "pg_events_"))
+                or bt in ("aim_other_comment", "pg_other_comment")):
+            self._unmodeled(f"statement:{bt}")
 
     # ---------------------------------------------------------------- #
     # Movement
@@ -3052,6 +3501,57 @@ class _Simulator:
         self.pending_turn_dir = None
         self.pending_drive_block = None
         self.pending_turn_block = None
+
+    def _takeover_pending(self) -> None:
+        """A drivetrain command taking over from an armed continuous
+        drive/turn grants the OUTGOING motion one frame first (reviewer
+        ground truth 2026-09-03, CROW-C015: in VR `drive fwd; turn right`
+        traces small drifting circles — the drivetrain acts on each
+        command for the scheduling gap before the next replaces it; our
+        instant-clear model produced pure in-place rotation instead).
+        MEASURED (reviewer VR probes, 2026-09-04, castle_crashers,
+        drive/turn + stop x100 cycles):
+          drive gap: 14.0mm/cycle @100%, 8.8mm @50% — two-point fit
+            d = v * 10.5ms + 3.62mm (sub-linear scaling = VR's
+            acceleration ramp, which this sim does not model; the
+            affine commit reproduces both measurements exactly).
+          turn gap: 0.54 deg/cycle @50% turn velocity (X unchanged —
+            pure pivot) => 2.6ms effective at commanded rate; ~6x
+            SMALLER than the drive gap. Linear-in-velocity assumed
+            (single-point measurement; flagged).
+        Time charged = distance/velocity (self-consistent kinematics);
+        the loop tick's top-up absorbs it. Loop-clock-off (legacy)
+        paths keep the old instant-clear semantics byte-identical."""
+        _TAKEOVER_DRIVE_T0_S = 0.0105     # measured 2026-09-04
+        _TAKEOVER_DRIVE_C_MM = 3.62       # measured 2026-09-04
+        _TAKEOVER_TURN_S = 0.0026         # measured 2026-09-04
+        if self.loop_iteration_time_s > 0:
+            if self.pending_drive_dir is not None \
+                    and self.pending_drive_block is not None:
+                v = max(self.drive_velocity_mm_per_s, 1e-9)
+                dist_mag = v * _TAKEOVER_DRIVE_T0_S + _TAKEOVER_DRIVE_C_MM
+                dist = self.pending_drive_dir * dist_mag
+                blk = self.pending_drive_block
+                self._clear_pending_motion()
+                self._move(dist, blk, add_time=False)
+                elapsed = dist_mag / v
+                self.sim_time_s += elapsed
+                self.timer_s += elapsed
+                return
+            if self.pending_turn_dir is not None \
+                    and self.pending_turn_block is not None:
+                ang = (self.pending_turn_dir
+                       * self.turn_velocity_deg_per_s * _TAKEOVER_TURN_S)
+                blk = self.pending_turn_block
+                self._clear_pending_motion()
+                self.heading = (self.heading + ang) % 360
+                self.drive_rotation_deg -= ang
+                self._record_step(blk)
+                self.step += 1
+                self.sim_time_s += _TAKEOVER_TURN_S
+                self.timer_s += _TAKEOVER_TURN_S
+                return
+        self._clear_pending_motion()
 
     # Virtual-march granularity for wait_until condition resolution (simulation
     # quality constants, like _FOREVER_UNROLL — not playground thresholds).
@@ -3215,30 +3715,91 @@ class _Simulator:
 
         # Kinematic push model (sensing Phase 5 — TESTCASE ONLY, inert in the
         # main sim; hybrid ruling 2026-08-19 + "assume the most favorable
-        # condition"): a piece the robot's advancing front reaches stays
-        # pinned ahead of the robot for the rest of the forward move; it is
-        # CLEARED (disappears) when its centre crosses the island edge.
-        # Turns/reverse naturally drop the piece where it was left.
+        # condition"): a piece the robot's advancing body reaches stays
+        # pinned against the robot in the direction of travel — ahead on a
+        # forward move, behind on a reverse move (directive 2026-08-27; the
+        # pre-fix code pinned reverse-pushed pieces to the FRONT). It is
+        # CLEARED (disappears) once it FULLY extends beyond the island edge:
+        # centre clearance past the boundary >= body_radius - the card's
+        # clear_tolerance_mm (the tolerance covers red-line stoppers that
+        # halt just short and sim imprecision). Turns drop the piece where
+        # it was left.
         if self.push_model == "kinematic":
             half_w_p = self.ctx.robot_width_mm / 2.0
             mvx, mvy = self.x - prev_x, self.y - prev_y
+            sgn_p = 1.0 if dist_mm >= 0.0 else -1.0
             for piece in self.live_pieces:
                 if piece.body_radius_mm is None or piece.object_id in self.pieces_cleared \
                         or piece.object_id in self._pending_piece_ids:
                     continue
                 pin = piece.body_radius_mm + half_w_p
+                within = _point_segment_dist(
+                    piece.x, piece.y, prev_x, prev_y, self.x, self.y) <= pin
                 advancing = (mvx * (piece.x - prev_x) + mvy * (piece.y - prev_y)) > 0.0
-                if advancing and _point_segment_dist(
-                        piece.x, piece.y, prev_x, prev_y, self.x, self.y) <= pin:
-                    rad_p = math.radians(self.heading)
-                    piece.x = self.x + pin * math.cos(rad_p)
-                    piece.y = self.y + pin * math.sin(rad_p)
-                    off = (not _point_in_convex_polygon(piece.x, piece.y,
-                                                        self.ctx.field_hex_vertices)
-                           if self.ctx.field_hex_vertices
-                           else _dist(piece.x, piece.y, 0.0, 0.0) > self.ctx.field_radius)
-                    if off:
-                        self.pieces_cleared[piece.object_id] = self.step
+                if self.graze_push:
+                    # GRAZE push (2026-09-02 prototype): any body contact
+                    # displaces the piece RADIALLY to the pin circle around
+                    # the robot centre — a tangential sweep shoves a side
+                    # piece aside, not just a head-on advance ahead. Fires on
+                    # contact regardless of the advancing dot-product.
+                    fire = within
+                else:
+                    fire = advancing and within
+                if fire:
+                    # A push IS a body contact (battery rev 2026-08-28).
+                    self.object_contacts.setdefault(piece.object_id, self.step)
+                    if self.graze_push:
+                        dx, dy = piece.x - self.x, piece.y - self.y
+                        d = math.hypot(dx, dy) or 1.0
+                        piece.x = self.x + pin * dx / d
+                        piece.y = self.y + pin * dy / d
+                    else:
+                        rad_p = math.radians(self.heading)
+                        piece.x = self.x + sgn_p * pin * math.cos(rad_p)
+                        piece.y = self.y + sgn_p * pin * math.sin(rad_p)
+                    self.piece_position_trace.append(
+                        (self.step, piece.object_id, piece.x, piece.y))
+                    if self.clear_rule == "displacement":
+                        # CLEARED once displaced from start by the card bar
+                        # (2026-09-02 prototype): default = one body radius.
+                        sx, sy = self._piece_start.get(
+                            piece.object_id, (piece.x, piece.y))
+                        thr = (self.clear_displacement_mm
+                               or piece.body_radius_mm)
+                        if _dist(piece.x, piece.y, sx, sy) >= thr:
+                            self.pieces_cleared[piece.object_id] = self.step
+                    elif self.clear_rule == "slip_band":
+                        # SLIP-BAND clear (reviewer direction 2026-09-02):
+                        # boundary-relative with a permissible margin — the
+                        # piece is cleared once pushed to within
+                        # clear_slip_margin_mm INSIDE the island edge (or
+                        # beyond it): close enough that real physics would
+                        # plausibly carry it off. Pushing a piece around
+                        # the interior earns nothing (that is engagement).
+                        verts = self.ctx.field_hex_vertices
+                        if verts:
+                            clr = _outside_polygon_clearance(
+                                piece.x, piece.y, verts)
+                            if clr > 0:
+                                depth = -clr
+                            else:
+                                depth = min(_point_segment_dist(
+                                    piece.x, piece.y, a[0], a[1], b[0], b[1])
+                                    for a, b in zip(verts,
+                                                    verts[1:] + verts[:1]))
+                            if depth <= self.clear_slip_margin_mm:
+                                self.pieces_cleared[piece.object_id] = self.step
+                    else:
+                        clearance = (_outside_polygon_clearance(
+                                         piece.x, piece.y, self.ctx.field_hex_vertices)
+                                     if self.ctx.field_hex_vertices
+                                     else max(0.0, _dist(piece.x, piece.y, 0.0, 0.0)
+                                              - self.ctx.field_radius))
+                        bar = (piece.body_radius_mm * self.clear_extension_fraction
+                               if self.clear_extension_fraction is not None
+                               else piece.body_radius_mm - self.clear_tolerance_mm)
+                        if clearance >= bar:
+                            self.pieces_cleared[piece.object_id] = self.step
 
         # Contact tracking (sensing Phase 2, hybrid ruling 2026-08-19): first
         # body contact with a movable target marks its position stale from
@@ -3246,14 +3807,31 @@ class _Simulator:
         # stale targets carry sensor_reading_stale. Contact is evaluated
         # along the whole traversed segment (the robot occupies every point
         # of a drive — the C031 lesson), not just the endpoint.
-        half_w = self.ctx.robot_width_mm / 2.0
+        # Conservative contact reach (reviewer ruling 2026-08-31, C161
+        # investigation): the old disc used half_w = 25.4mm, but the
+        # chassis is 133mm long with the distance sensor at the nose — a
+        # sensor-guided approach converged to sensor-at-surface (physical
+        # contact in VR; the rocks roll and readings go stale) without
+        # ever registering. The card-declared reach is a DIRECTION-FREE
+        # disc that contains the whole chassis (circumscribed radius
+        # ~71mm) plus margin — deliberately conservative: it errs toward
+        # FIRING the disturbance (degrade-with-a-flag), never toward
+        # silent trust, and is not a precision claim.
+        # Kinematic gate (same rationale as the _flag_stale suppression): a
+        # battery world is deterministic BY DECLARATION and its contact
+        # model is the probe-validated push pin — the conservative reach
+        # exists for unmodeled PRODUCTION physics and must not loosen
+        # battery engagement semantics.
+        reach = max(self.ctx.robot_width_mm / 2.0,
+                    0.0 if self.push_model == "kinematic"
+                    else self.ctx.contact_forward_reach_mm)
         for target in self._sensor_targets():
             if target.body_radius_mm is None or not target.movable:
                 continue
             if target.object_id in self.object_contacts:
                 continue
             if _point_segment_dist(target.x, target.y, prev_x, prev_y,
-                                   self.x, self.y) <= target.body_radius_mm + half_w:
+                                   self.x, self.y) <= target.body_radius_mm + reach:
                 self.object_contacts[target.object_id] = self.step
 
         # Named regions: sample coverage along movement path (footprint-aware).
@@ -3269,8 +3847,14 @@ class _Simulator:
             self.pen_segments.append((prev_x, prev_y, self.x, self.y,
                                       self.pen_color, self.pen_width_name))
 
-        self._record_step(block, traversed_regions=traversed_regions)
-        self.step += 1
+        if self._marching:
+            # clock-marched continuous motion: coarse path steps (OI-28
+            # amendment 3) — sensors/contact/coverage above ran per slice
+            self._emit_marched_step(block, traversed_regions=traversed_regions)
+        else:
+            self._record_step(block, traversed_regions=traversed_regions)
+            self._march_anchor = None
+            self.step += 1
         self._latch_sensor_hats_along(prev_x, prev_y, self.x, self.y)
         if restart_after_move:
             raise _HatRestartSignal()
@@ -3280,6 +3864,7 @@ class _Simulator:
         block: BlockNode,
         magnet_fires: bool = False,
         traversed_regions: set[str] | None = None,
+        replace_last: bool = False,
     ) -> PathStep:
         # Regions at the endpoint; union with any regions traversed during movement
         current_regions = frozenset(
@@ -3297,7 +3882,11 @@ class _Simulator:
         )
 
         ps = PathStep(
-            step=self.step,
+            # OI-28 amendment 3: a coalesced marched slice REPLACES the
+            # previous step, keeping its index — recorded step indices
+            # (contacts, clears, hat fires, timeline) stay valid paths.
+            step=(self.path[-1].step if replace_last and self.path
+                  else self.step),
             x=self.x,
             y=self.y,
             heading=self.heading,
@@ -3308,7 +3897,10 @@ class _Simulator:
             magnet_fires=magnet_fires,
             thread_id=self._current_thread_idx,
         )
-        self.path.append(ps)
+        if replace_last and self.path:
+            self.path[-1] = ps
+        else:
+            self.path.append(ps)
         return ps
 
     def _sample_region_coverage(
@@ -3421,14 +4013,56 @@ class _Simulator:
         # <field>, so the named lookups above miss them entirely.
         return self._get_numeric(block, field_names[0] if field_names else "")
 
-    def _eval_expression(self, block: BlockNode) -> float | bool | str:
-        try:
-            return self._eval_expression_unchecked(block)
-        except (ArithmeticError, ValueError, TypeError, RecursionError):
-            self._flag("invalid_expression")
-            raise _GateSignal()
+    def _slot(self, block: BlockNode, name: str, index: int) -> BlockNode | None:
+        """Return a value input by slot NAME, falling back to position.
 
-    def _eval_expression_unchecked(self, block: BlockNode) -> float | bool | str:
+        Name-bound for the same reason the if-branches are (CROW-C117 fix):
+        positional indexing mis-binds whenever an earlier slot is empty.
+        """
+        node = (getattr(block, "value_slots", None) or {}).get(name)
+        if node is not None:
+            return node
+        vals = block.values or []
+        return vals[index] if index < len(vals) else None
+
+    def _slot_value(self, block: BlockNode, name: str, index: int, default):
+        """Evaluate the named value input, or `default` when the slot is empty."""
+        node = self._slot(block, name, index)
+        if node is None:
+            return default
+        return self._eval_expression(node)
+
+    def _slot_num(self, block: BlockNode, name: str, index: int,
+                  default: float = 0.0) -> float:
+        """Evaluate the named value input as a float."""
+        try:
+            return float(self._slot_value(block, name, index, default))
+        except (TypeError, ValueError):
+            return default
+
+    def _compare(self, a, op: str, b) -> bool:
+        """One implementation of `a OP b`, shared by comparison and range.
+
+        Numeric when both sides coerce, string otherwise — matching the old
+        pg_operator_comparison behaviour.  An unrecognised operator returns
+        False AND fires unmodeled_construct_defaulted (OI-31: degrade with
+        a named flag, never silently).
+        """
+        try:
+            a, b = float(a), float(b)
+        except (TypeError, ValueError):
+            a, b = str(a), str(b)
+        op = (op or "").strip()
+        if op in ("=", "=="):        return a == b
+        if op in ("!=", "≠", "<>"):  return a != b
+        if op == "<":                return a < b
+        if op in ("<=", "≤"):        return a <= b
+        if op == ">":                return a > b
+        if op in (">=", "≥"):        return a >= b
+        self._unmodeled(f"comparison_op={op or '<absent>'}")
+        return False
+
+    def _eval_expression(self, block: BlockNode) -> float | bool | str:
         """Recursively evaluate a reporter (value) block.
 
         Returns a Python int, float, bool, or str.  Unrecognized blocks return 0.
@@ -3496,13 +4130,19 @@ class _Simulator:
 
         # ---- Arithmetic operators ----
         if bt == "pg_operator_math":
-            a = float(self._eval_expression(block.values[0])) if block.values else 0.0
-            b = float(self._eval_expression(block.values[1])) if len(block.values) > 1 else 0.0
-            op = block.get_field("OPERATOR") or "+"
+            # The field is MATH, not OPERATOR (2026-08-31).  Reading the wrong
+            # name returned None and defaulted EVERY block to "+", so the 79
+            # subtractions and 21 multiplications in the corpus all computed as
+            # addition.  OPERATOR is kept as a fallback in case another VEX
+            # release uses it; the corpus census shows only MATH.
+            a = self._slot_num(block, "NUM1", 0)
+            b = self._slot_num(block, "NUM2", 1)
+            op = (block.get_field("MATH") or block.get_field("OPERATOR") or "+").strip()
             if op == "+": return a + b
             if op == "-": return a - b
             if op == "*": return a * b
             if op == "/": return a / b if b != 0 else 0.0
+            self._unmodeled(f"pg_operator_math.MATH={op}")
             return 0.0
 
         if bt == "pg_operator_remainder":
@@ -3517,14 +4157,40 @@ class _Simulator:
             # identity requires deterministic paths (the frozen-fixture tripwire
             # and the old project's BUG-14 lesson). The midpoint is the expected
             # value of the student's declared range.
-            return float((min(lo, hi) + max(lo, hi)) / 2.0)
+            #
+            # The substitution is a MODELLING CHOICE, not a faithful
+            # simulation, and it must say so (2026-08-28): the real run drew a
+            # value we cannot know, and — because these blocks sit inside loops
+            # in 138 of 139 corpus runs that use them — it drew a NEW one on
+            # every iteration, so trajectory error compounds with each draw.
+            # A run whose path depends on this is unreproducible IN PRINCIPLE.
+            # The flag carries that uncertainty (high-certainty masks must see
+            # it); the draw COUNT is provenance and stays a result field, never
+            # a flag (the motions_superseded precedent).
+            self.nondeterministic_draws += 1
+            self._flag("nondeterministic_variable")
+            lo, hi = min(lo, hi), max(lo, hi)
+            if self.random_policy == "midpoint":
+                return float((lo + hi) / 2.0)
+            if self.random_policy == "low":
+                return float(lo)
+            if self.random_policy == "high":
+                return float(hi)
+            return float(self._rng.randint(lo, hi))
 
         if bt == "pg_operator_round":
             val = float(self._eval_expression(block.values[0])) if block.values else 0.0
             return float(round(val))
 
         if bt == "pg_operator_function":
-            fn = (block.get_field("OPERATOR") or "abs").lower()
+            # Zero corpus incidence and the docs do not expose the XML field
+            # name (OI-31 sub-decision 2, 2026-08-31): OPERATOR is a guess.
+            # When the read comes back absent, say so instead of silently
+            # computing abs — the first real instance flags itself.
+            fn_raw = block.get_field("OPERATOR")
+            if fn_raw is None:
+                self._unmodeled("pg_operator_function.OPERATOR=<absent>")
+            fn = (fn_raw or "abs").lower()
             val = float(self._eval_expression(block.values[0])) if block.values else 0.0
             _fn_map = {
                 "abs": abs, "floor": math.floor, "ceiling": math.ceil,
@@ -3540,6 +4206,7 @@ class _Simulator:
                     return float(fn_callable(val))
                 except (ValueError, ZeroDivisionError):
                     return 0.0
+            self._unmodeled(f"pg_operator_function.fn={fn}")
             return val
 
         if bt == "pg_operator_function_atan2":
@@ -3548,36 +4215,46 @@ class _Simulator:
             return math.degrees(math.atan2(y, x))
 
         # ---- Comparison operators ----
-        if bt == "pg_operator_comparison":
-            a = self._eval_expression(block.values[0]) if block.values else 0
-            b = self._eval_expression(block.values[1]) if len(block.values) > 1 else 0
-            op = block.get_field("OPERATOR") or "="
-            try:
-                a_f, b_f = float(a), float(b)
-                a, b = a_f, b_f
-            except (TypeError, ValueError):
-                a, b = str(a), str(b)
-            if op in ("=", "=="): return a == b
-            if op == "<":         return a < b
-            if op in ("<=", "≤"): return a <= b
-            if op == ">":         return a > b
-            if op in (">=", "≥"): return a >= b
-            return False
+        # `operator_comparison` (no pg_ prefix) is the same shape and appears
+        # once in the corpus; it previously had no handler at all.
+        if bt in ("pg_operator_comparison", "operator_comparison"):
+            # The field is COMPARISON, not OPERATOR (2026-08-31) — every
+            # comparison in the corpus was evaluated as "=".
+            a = self._slot_value(block, "NUM1", 0, 0)
+            b = self._slot_value(block, "NUM2", 1, 0)
+            op = block.get_field("COMPARISON") or block.get_field("OPERATOR") or "="
+            return self._compare(a, op, b)
 
         if bt == "pg_operator_range":
-            # lo OP val OP hi — both operators stored in OPERATOR field as e.g. "< val <"
-            # values[0]=lo, values[1]=val, values[2]=hi
-            lo  = float(self._eval_expression(block.values[0])) if block.values else 0.0
-            val = float(self._eval_expression(block.values[1])) if len(block.values) > 1 else 0.0
-            hi  = float(self._eval_expression(block.values[2])) if len(block.values) > 2 else 0.0
-            return min(lo, hi) <= val <= max(lo, hi)
+            # NUM1 is the TESTED value; NUM2 and NUM3 are bounds, each compared
+            # AGAINST NUM1 — `NUM1 C1 NUM2 and NUM1 C2 NUM3`.  Corpus census
+            # (2026-08-31): all 58 instances are `distance > lo` / `distance <
+            # hi`.  The old code read values[1] as the tested value and ignored
+            # COMPARISON1/COMPARISON2 entirely, computing
+            # min(NUM1,NUM3) <= NUM2 <= max(NUM1,NUM3) — which for the corpus
+            # form is true exactly when the student's condition is false.
+            val = self._slot_num(block, "NUM1", 0)
+            lo  = self._slot_num(block, "NUM2", 1)
+            hi  = self._slot_num(block, "NUM3", 2)
+            c1 = block.get_field("COMPARISON1") or ">"
+            c2 = block.get_field("COMPARISON2") or "<"
+            return self._compare(val, c1, lo) and self._compare(val, c2, hi)
 
         # ---- Logical operators ----
         if bt == "pg_operator_and_or":
-            a = bool(self._eval_expression(block.values[0])) if block.values else True
-            b = bool(self._eval_expression(block.values[1])) if len(block.values) > 1 else True
-            op = (block.get_field("OPERATOR") or "and").lower()
-            return a and b if op == "and" else a or b
+            # The field is CHECK, not OPERATOR (2026-08-31).  get_field
+            # returned None and defaulted to "and", so all 44 `or` blocks in
+            # the corpus were evaluated as AND — the CROW-C094 forever loop
+            # `distance_found or fronteye_near or downeye_near` could never
+            # become true.  Both operands are evaluated eagerly (no
+            # short-circuit), preserving prior behaviour: sensor evaluation
+            # order feeds sensor_first_eval.
+            a = bool(self._slot_value(block, "OPERAND1", 0, True))
+            b = bool(self._slot_value(block, "OPERAND2", 1, True))
+            op = (block.get_field("CHECK") or block.get_field("OPERATOR") or "and").strip().lower()
+            if op not in ("and", "or"):
+                self._unmodeled(f"pg_operator_and_or.CHECK={op}")
+            return (a and b) if op == "and" else (a or b)
 
         if bt == "pg_operator_not":
             val = self._eval_expression(block.values[0]) if block.values else True
@@ -3671,6 +4348,10 @@ class _Simulator:
         # raising is population-changing and is a separate attributed change.
         if bt not in self.unknown_reporter_blocks:
             self.unknown_reporter_blocks.append(bt)
+        # brightness is ruled foreign-and-faithfully-inert in CCP — its 0 is
+        # not a degradation (capabilities.yaml pg_sensing_optical_brightness).
+        if bt != "pg_sensing_optical_brightness":
+            self._unmodeled(f"reporter:{bt}")
         return 0
 
     # ---------------------------------------------------------------- #
@@ -3741,7 +4422,8 @@ class _Simulator:
                         _dist(ex, ey, target.x, target.y) <= target.body_radius_mm:
                     contact = self.object_contacts.get(target.object_id)
                     if target.movable and contact is not None and contact < self.step:
-                        self._flag("sensor_reading_stale")
+                        self._flag_stale()
+                    self._note_target_detect(target)
                     return True
             for cz in self.ctx.color_zones:
                 if cz.registers_as_object and cz.eye in (None, "down") \
@@ -3755,6 +4437,16 @@ class _Simulator:
             if _dist(self.x, self.y, obj.x, obj.y) <= obj.tolerance:
                 return True
         return False
+
+    def _flag_stale(self) -> None:
+        """Emit sensor_reading_stale — EXCEPT under the kinematic push model
+        (directive 2026-08-27): a battery world is deterministic by
+        declaration and the push model UPDATES piece positions, so readings
+        there are never stale. Only the flag emission is gated;
+        _movable_world_disturbed itself stays untouched because it also
+        drives the movable_predicates bracketing machinery."""
+        if self.push_model != "kinematic":
+            self._flag("sensor_reading_stale")
 
     def _movable_world_disturbed(self) -> bool:
         """Hybrid-ruling completion (reviewer diagnoses CROW-C072 and the
@@ -3770,6 +4462,12 @@ class _Simulator:
         return any(self.ctx.regions[rid].disturbs_world
                    for rid, cells in self.region_cells.items() if cells)
 
+    def _note_target_detect(self, target) -> None:
+        """Record the first step a MOVABLE target satisfied any sensor
+        (2026-09-05, additive — feeds the task-semantic acquire seam)."""
+        if getattr(target, "movable", False):
+            self.first_target_detect.setdefault(target.object_id, self.step)
+
     def _distance_hits(self) -> "list[tuple[float, ObjectRef]] | None":
         """Targets in the distance sensor's banded cone from the current
         pose, as (surface_distance, target) nearest-first. None when the
@@ -3778,7 +4476,7 @@ class _Simulator:
         body radius."""
         spec = self.ctx.sensor_specs.get("front_distance") or {}
         if spec and self._movable_world_disturbed():
-            self._flag("sensor_reading_stale")
+            self._flag_stale()
         rng = float(spec.get("range_mm") or 0.0)
         bands = [b for b in (spec.get("fov_bands") or [])
                  if isinstance(b, dict) and b.get("fov_deg")]
@@ -3806,6 +4504,7 @@ class _Simulator:
             spread = math.tan(math.radians(fov / 2.0))
             perp = abs(vx * dyu - vy * dxu)
             if perp <= target.body_radius_mm + along * spread:
+                self._note_target_detect(target)
                 hits.append((max(0.0, along - target.body_radius_mm), target))
         hits.sort(key=lambda h: h[0])
         if hits and spec.get("assumed"):
@@ -3813,7 +4512,7 @@ class _Simulator:
         for _, target in hits:
             contact = self.object_contacts.get(target.object_id)
             if target.movable and contact is not None and contact < self.step:
-                self._flag("sensor_reading_stale")
+                self._flag_stale()
                 break
         return hits
 
@@ -3833,7 +4532,7 @@ class _Simulator:
         if rng <= 0.0 or fov <= 0.0:
             return None
         if self._movable_world_disturbed():
-            self._flag("sensor_reading_stale")
+            self._flag_stale()
         mount = float(spec.get("mount_forward_mm") or 0.0)
         rad = math.radians(self.heading)
         dxu, dyu = math.cos(rad), math.sin(rad)
@@ -3849,6 +4548,7 @@ class _Simulator:
                 continue
             perp = abs(vx * dyu - vy * dxu)
             if perp <= target.body_radius_mm + along * spread:
+                self._note_target_detect(target)
                 hits.append((max(0.0, along - target.body_radius_mm), target))
         hits.sort(key=lambda h: h[0])
         if hits and spec.get("assumed"):
@@ -3856,7 +4556,7 @@ class _Simulator:
         for _, target in hits:
             contact = self.object_contacts.get(target.object_id)
             if contact is not None and contact < self.step:
-                self._flag("sensor_reading_stale")
+                self._flag_stale()
                 break
         return hits
 
@@ -3895,6 +4595,8 @@ class _Simulator:
             loop_was_capped=self.loop_was_capped,
             loop_cap_steps=list(self.loop_cap_steps),
             unknown_reporter_blocks=list(self.unknown_reporter_blocks),
+            unmodeled_constructs=list(self.unmodeled_constructs),
+            world_event_log=list(self.world_event_log),
             pen_segments=list(self.pen_segments),
             origin_x=self.ctx.spawn_x,
             origin_y=self.ctx.spawn_y,
@@ -3903,8 +4605,13 @@ class _Simulator:
             fabricated_steps=list(self.fabricated_steps),
             color_detections=list(self.color_detections),
             object_contacts=dict(self.object_contacts),
+            first_target_detect=dict(self.first_target_detect),
             pieces_cleared=dict(self.pieces_cleared),
             piece_positions=dict(self.piece_positions),
+            piece_final_positions={p.object_id: (p.x, p.y)
+                                   for p in self.live_pieces
+                                   if p.object_id in self.piece_positions},
+            piece_position_trace=list(self.piece_position_trace),
             sensor_first_eval=dict(self.sensor_first_eval),
             sensor_hats_fired={k: list(v) for k, v in self.sensor_hats_fired.items()},
             blocks_executed=self.blocks_executed,
@@ -3913,6 +4620,7 @@ class _Simulator:
             scheduler="cooperative" if self._sequencer is not None
             else "sequential",
             motions_superseded=self.motions_superseded,
+            nondeterministic_draws=self.nondeterministic_draws,
             drivetrain_contentions=self.drivetrain_contentions,
             drive_rotation_deg=self.drive_rotation_deg,
             loops_exercised=dict(self.loops_exercised),
@@ -3948,21 +4656,9 @@ def _count_polygon_grid_cells(
 ) -> int:
     """Count 100mm grid cells whose centre falls inside a convex polygon.
 
-    Pure geometry: the same playground region gives the same count on every run,
-    but the per-request config copy rebuilds the region each time, so the result
-    is memoized on the (hashable) vertices and bounds rather than on the region
-    object. The count is a plain int, so nothing observable changes.
+    Iterates over the AABB of the polygon and tests each cell centre against
+    the polygon. The AABB bounds are passed in to avoid recomputing them.
     """
-    return _count_polygon_grid_cells_cached(tuple(vertices), x_min, x_max, y_min, y_max)
-
-
-@functools.lru_cache(maxsize=256)
-def _count_polygon_grid_cells_cached(
-    vertices: tuple[tuple[float, float], ...],
-    x_min: float, x_max: float, y_min: float, y_max: float,
-) -> int:
-    """Iterate over the polygon's AABB and test each cell centre. The AABB
-    bounds are passed in to avoid recomputing them."""
     cell = _COVERAGE_GRID_CELL_MM
     i_min = int(math.floor(x_min / cell))
     i_max = int(math.ceil(x_max / cell))
@@ -3976,6 +4672,22 @@ def _count_polygon_grid_cells_cached(
             if _point_in_convex_polygon(cx, cy, vertices):
                 count += 1
     return count
+
+
+def _outside_polygon_clearance(x: float, y: float,
+                               vertices: list[tuple[float, float]]) -> float:
+    """Distance from (x, y) to the convex polygon boundary — 0.0 inside.
+
+    Min point-to-segment distance over the edges handles vertex corners
+    exactly, so `clearance >= body_radius` is the true disk-fully-outside
+    test the full-extension clear rule (directive 2026-08-27) needs."""
+    if _point_in_convex_polygon(x, y, vertices):
+        return 0.0
+    n = len(vertices)
+    return min(_point_segment_dist(x, y, vertices[i][0], vertices[i][1],
+                                   vertices[(i + 1) % n][0],
+                                   vertices[(i + 1) % n][1])
+               for i in range(n))
 
 
 def _point_in_convex_polygon(x: float, y: float, vertices: list[tuple[float, float]]) -> bool:

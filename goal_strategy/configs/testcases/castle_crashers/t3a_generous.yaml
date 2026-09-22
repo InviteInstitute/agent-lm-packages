@@ -1,0 +1,85 @@
+# T3 block-to-boundary transition (generous — block near the placed edge, short push).
+# The activation event places the boundary AND a block
+# relative to the robot's pose, cueing engagement. BOTH
+# forms of the disappearance stop cue run faithfully
+# (reporter idiom, and the loses hat since OI-26).
+# IN-SIM PROBE: the disappearance-cue strategy (continuous drive, wait-until-found,
+#   wait-until-NOT-found, reverse) acquires, pushes 400mm, CLEARS,
+#   and the vanish releases the wait with the robot still ~40-70mm
+#   inside — the cue is observable and actionable. A scan-then-push
+#   seeker passes ALL FOUR checks. NOTE the clear-vs-red trade: an
+#   instant red-stopper engages (1.00) but cannot clear (block lands
+#   ~6mm past the edge vs the 55mm bar) — clearing while respecting
+#   the ring requires pushing ~50mm past first red sight. A real
+#   capability gradient, deliberate.
+# Clear rule (reviewer-ruled 2026-09-02, second revision — supersedes
+# both the OI-27 fraction-of-radius bar and the short-lived
+# direction-blind displacement rule): SLIP-BAND, boundary-relative —
+# a piece is cleared once PUSHED to within clear_slip_margin_mm INSIDE
+# the island edge (or beyond). Margin 200 = ONE BLOCK DIAMETER: a piece
+# within a diameter of the edge would in reality be pressing into its
+# outer-wall neighbours and shoving them off (the block-chain physics
+# the sim declares away). Probed 2026-09-02 over margins 125-400 on the
+# 101-program telemetry sample: correlations statistically flat across
+# 125-300 (T1 weight +.31-.35, coverage +.38-.41), so the value is
+# chosen on physical interpretability, reviewer-revisable. Rationale: in the real environment
+# blocks interact — early clearing happens far from the edge through
+# block-on-block chains pushing outer pieces off; only as blocks
+# deplete must the robot drive near the edge. Our declared
+# no-piece-piece-interaction sim represents that with a generous slip
+# zone on the integrated worlds (T1/T4/T5). The BOUNDARY family
+# (T2/T3/T6) keeps the TIGHT extension bar (55% of radius past the
+# edge) — those tests exist to read precise block-at-boundary
+# handling. Pushing a piece around the interior earns nothing
+# (engagement covers that).
+# Constructed deterministically by scripts/generate_battery_cards.py.
+scenario_id: t3a_generous
+family: t3_block_boundary
+description: T3 block-to-boundary — generous — block near the placed edge, short push.
+goal: [clear_debris_zone, remain_on_island]
+testcase_physics: {push_model: kinematic, loop_unroll: 60, clear_extension_fraction: 0.55,
+                    loop_clock_hz: 60, time_budget_s: 60, invariance_budget_s: 30}
+# B-1 forward-design constraint (SENSOR_TESTBATTERY §6.2):
+evidence:
+  variables: [boundary_responsivity, proportion_engaged, proportion_cleared, robot_on_island]
+applies: whole_run
+# Episode segmentation thresholds (B-2, reviewer-ruled 2026-08-31:
+# card-declared, values DERIVED from this card's environment):
+#   engagement_radius_mm = piece body_radius 100 + contact pin 125.4
+#   retreat_mm           = the family's retreat trigger (400)
+#   band_mm              = the ring width (89, production calibration)
+#   stall_mm             = the measured frozen threshold (50)
+#   divergence_mm        = the detects check's divergence bound (100)
+#   post_clear_bar_mm     = completion-cue bar (2026-09-05): a post-clear
+#                          behaviour change within this travel reads as
+#                          USING the disappearance cue (~one drive_for-150
+#                          chunk, the corpus idiom; first-pass, revisable)
+#   eye_reach_mm          = down-eye forward offset (robot card) — the
+#                          encounter band is band_mm + eye_reach so an
+#                          ENCOUNTER = the eye entered the ring (boundary
+#                          became sensor-relevant), not the CENTRE within
+#                          the band; a program that stops precisely short
+#                          then reads as a SURVIVED encounter, not as none
+#                          (reviewer 2026-09-01).
+#   exit_grace_mm        = the production card's physical half-diagonal
+#                          (on_island_xy_mm 71.2) — an encounter is failed
+#                          only when the CENTRE exceeds the edge by more
+#                          (reviewer ruling 2026-09-01: same permissible
+#                          extension in both instruments)
+episode_rules: {engagement_radius_mm: 225.4, retreat_mm: 400, band_mm: 89,
+                stall_mm: 50, divergence_mm: 100, turn_change_deg: 15,
+                exit_grace_mm: 71.2, eye_reach_mm: 35, post_clear_bar_mm: 150}
+arena_polygon_mm: [[8000, 8000], [8000, -8000], [-8000, -8000], [-8000, 8000]]
+encounter_within_mm: 400
+world_events:
+  - id: encounter_1
+    at: activation
+    place_boundary: {ahead_mm: 1200, approach_angle_deg: 0, ring_width_mm: 89}
+    pieces:
+      block_1: {relative: {ahead_mm: 800, bearing_deg: 0}, body_radius_mm: 100}
+checks:
+  - {name: detects,            rule: behavioral_divergence, divergence_mm: 100, facet: object_detection}
+  - {name: proportion_engaged, rule: proportion_engaged, facet: object_engagement}
+  - {name: proportion_cleared, rule: proportion_cleared, facet: push_execution}
+  - {name: stays_on_island,    rule: edge_encounters_survived, facet: edge_failure_handling,
+     goal: remain_on_island}

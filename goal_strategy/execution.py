@@ -25,7 +25,8 @@ class Execution:
 
 def prepare_execution(workspace_xml, program_id, playground_params=None,
                       playground="castle_crashers", truncate=True, configs_dir=None,
-                      conditional_hats=None, stack_precedence=None, scheduler=None):
+                      conditional_hats=None, stack_precedence=None, scheduler=None,
+                      run_duration_s=None, duration_imputed=False):
     from .profile import _find_boundary_exit, _fall_off_tolerance, _on_island
     cfg = load_configs(playground, configs_dir)
     treatment = (conditional_hats
@@ -59,10 +60,24 @@ def prepare_execution(workspace_xml, program_id, playground_params=None,
     sched = (scheduler
              or (cfg.card.get("simulation") or {}).get("scheduler")
              or "sequential")
+    # OI-28 (2026-08-28): the measured 60Hz loop clock, card-declared as
+    # `simulation.loop_clock_hz`. It is enabled ONLY when the caller also
+    # supplies the run's observed duration as the wall-clock budget — the
+    # clock without a budget leaves the unroll caps governing, which is
+    # strictly worse than clock-off. Callers with no duration (the public
+    # profile(), the streaming path) are therefore unchanged.
+    _hz = (cfg.card.get("simulation") or {}).get("loop_clock_hz")
+    _clock = ({"loop_iteration_time_s": 1.0 / float(_hz),
+               "time_budget_s": float(run_duration_s)}
+              if _hz and run_duration_s else {})
     full_sim = (simulate_path(program, cfg.context, conditional_hats=sim_mode,
                               stack_precedence=stack_precedence,
-                              scheduler=sched)
+                              scheduler=sched, **_clock)
                 if program is not None and not rejected else None)
+    if full_sim is not None and _clock and duration_imputed:
+        # the budget is a SESSION MEDIAN, not this run's observed duration
+        # (reviewer ruling 2026-08-28: impute, flag, no sensitivity sweep)
+        full_sim.execution_flags.append("duration_imputed")
 
     # D2 gates (Stage 1, 2026-08-21; foreign layer 2026-08-24): over the
     # ACTIVE blocks (orphans degrade nothing) —

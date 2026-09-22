@@ -219,3 +219,29 @@ def stack_precedence_map(runs: list) -> dict:
         if _unconditionally_drives(winner):
             out[r.run_id] = res.winner
     return out
+
+
+def duration_budgets(runs) -> "tuple[dict, float]":
+    """OI-28 (2026-08-28): the wall-clock budget rule, in ONE place so
+    every sweep uses the same one. Returns (session_median_ms,
+    global_median_ms). A run's budget is its OBSERVED run_duration_ms;
+    where that is missing the reviewer ruled: impute the SESSION median
+    (falling back to the corpus median), flag it `duration_imputed`, and
+    run no sensitivity sweep."""
+    import statistics
+    by_session: dict = {}
+    for r in runs:
+        if getattr(r, "run_duration_ms", None):
+            by_session.setdefault(r.derived_session_id, []).append(
+                float(r.run_duration_ms))
+    session_median = {sid: statistics.median(v) for sid, v in by_session.items()}
+    allv = [d for v in by_session.values() for d in v]
+    return session_median, (statistics.median(allv) if allv else 0.0)
+
+
+def budget_for(run, session_median: dict, global_median: float):
+    """(seconds, imputed?) for one run — see duration_budgets."""
+    if getattr(run, "run_duration_ms", None):
+        return float(run.run_duration_ms) / 1000.0, False
+    med = session_median.get(run.derived_session_id) or global_median
+    return (med / 1000.0, True) if med else (None, False)

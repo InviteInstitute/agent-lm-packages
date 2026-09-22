@@ -1,4 +1,0 @@
-streamlit>=1.50
-plotly>=6
-pandas
-pyarrow

@@ -1,0 +1,231 @@
+# Purpose-2 CLAIM TABLE (the D-a…D-e rulings made machine-readable,
+# 2026-09-09). Every floor claim names its evidence, its threshold, and
+# — per the D-d THRESHOLD-INFERENCE PRINCIPLE — the inference the
+# threshold makes: presence (>=1), replication (>=2; within-test = the
+# behavior re-arms, across tests = not world-specific), consistency
+# (all). Norm-referenced bars are forbidden (the retracted SMC .10
+# fraction). Combination (rubric_combiner.py): census ceilings cap;
+# role-tiered votes (primary 1.0 / supporting 0.5 / validation gates);
+# level = highest floor with net support >= support_min and no
+# surviving negative; U when nothing informative reached the dimension.
+# Negatives are OPEN but OPPORTUNITY-VERIFIED (D-e(3)): any
+# demonstrated-opportunity non-response subtracts; abstention never
+# does. Borderline claims (|net - support_min| <= borderline_margin)
+# are flagged — the D-b validation oversample for C3.
+claims_id: castle_crashers_claims_v1
+support_min: 1.0
+borderline_margin: 0.25
+# SMC-1 parameter-audit tolerance (literal within this % of a
+# card-geometry distance counts as calibrated)
+calibration_tolerance_pct: 10
+# SMC lower-scale restructure (reviewer-ruled 2026-09-09): parse-only
+# vocabulary palette + the ONE specificity rule. Palette values are
+# CORPUS-DERIVED (top-frequency audit over the 1,600 battery runs,
+# 2026-09-09: drives 200x1939, 800, 1200, 2000, 1000, 3000; turns
+# 90x2758, 120, 180, 60, 270) — never invented.
+smc_vocabulary:
+  canonical_drive_values: [200, 800, 1200, 2000, 1000, 3000]
+  canonical_turn_values: [90, 120, 180, 60, 270, 45]
+  round_drive_multiple_mm: 100    # round multiples also read canonical
+  cardinal_turn_multiple_deg: 45
+  cluster_merge_pct: 5            # values within 5% are ONE value
+  fine_grain_multiple: 5          # not a multiple of 5 = fine-grained
+smc_specificity:
+  # inference: differentiation beyond the shared palette is the residue
+  # of fitting motion to the encountered spatial problem (route B,
+  # indirect — robust to sim uncertainty). Disjunction of signals:
+  min_literals: 1                    # below this: None (U-side)
+  distinct_drive_clusters_min: 3     # inference: replicated differentiation
+  fine_values_min: 1                 # inference: presence of a value only
+                                     #   tuning produces
+  canonical_prop_max: 0.5            # inference: majority non-palette
+  canonical_prop_min_literals: 4     #   vocabulary, judged only with
+                                     #   enough literals (small-sample guard)
+dimensions:
+  environmental_feedback:
+    levels:
+      1:
+        floors:
+          - {evidence: battery.code_max_arm_alternations, op: ge, value: 1,
+             scope: any_test, weight: primary,
+             inference: presence — one state-driven change}
+          - {evidence: production.max_arm_alternations, op: ge, value: 1,
+             scope: production, weight: primary,
+             inference: presence (production channel)}
+          - {evidence: battery.response_latency_mm, op: present,
+             scope: any_test, weight: supporting,
+             inference: presence — onset changed the trajectory}
+        negatives:
+          - {evidence: battery.detects_fail_with_encounter, op: ge, value: 2,
+             inference: replication of non-response under opportunity}
+      2:
+        floors:
+          - {evidence: battery.code_max_arm_alternations, op: ge, value: 2,
+             scope: any_test, weight: primary,
+             inference: replication — regulation re-arms within a run}
+          - {evidence: production.max_arm_alternations, op: ge, value: 2,
+             scope: production, weight: primary,
+             inference: replication (production channel)}
+          - {evidence: battery.boundary_band_entries, op: ge, value: 2,
+             scope: any_test, weight: supporting,
+             inference: replication of boundary sampling (interpretive
+               rule — supports EF-2 only alongside alternations)}
+  control_structure:
+    levels:
+      1:
+        floors:
+          - {evidence: production.exercised_loops_any, op: ge, value: 1,
+             scope: production, weight: primary,
+             inference: presence of exercised repetition}
+      2:
+        floors:
+          - {evidence: production.coordination_relations, op: ge, value: 1,
+             scope: production, weight: primary,
+             inference: presence of an exercised state-dependent relation}
+          - {evidence: production.state_controlled_termination, op: true,
+             scope: production, weight: primary,
+             inference: presence of state-controlled termination}
+      3:
+        floors:
+          - {evidence: production.coordination_relations, op: ge, value: 2,
+             scope: production, weight: primary,
+             inference: replication — two distinct coordination relations}
+  spatial_motion:
+    # Gated ordinal lower scale (reviewer-ruled 2026-09-09): U = not
+    # evaluable (insufficient executed fixed motion), NEVER "no
+    # indicator fired"; L0 = VERIFIED ZERO (evaluable, fitting sought
+    # both routes, not demonstrated — no positive coarse indicator);
+    # L2 overrides everything below (state derivation REPLACES the need
+    # for fixed calibration — an all-default-palette L2 stays L2).
+    # gate = the indicator's own U-side: specificity is None exactly
+    # when fixed-motion literals (drive AND turn) fall below the
+    # smc_specificity min — motion_literal_count is drive-only and
+    # would wrongly exclude turn-only programs (probe finding
+    # 2026-09-09: 9 such runs).
+    evaluability: {evidence: production.fixed_motion_specificity,
+                   op: known, name: smc_evaluable,
+                   u_reason: not_evaluable}
+    verified_zero: true
+    levels:
+      1:
+        floors:
+          - {evidence: production.calibrated_param_matches, op: ge, value: 1,
+             scope: production, weight: primary, strength: direct,
+             inference: presence of geometry-fitted fixed motion — the
+               literal matches a nameable card distance (route A;
+               canonical-ambiguous matches annotated, see
+               canonical_ambiguous_matches)}
+          - {evidence: production.fixed_motion_specificity, op: ge, value: 1,
+             scope: production, weight: primary, strength: indirect,
+             inference: presence of differentiated fixed-motion
+               specification beyond the corpus palette (route B —
+               values too specific to be anything but tuned, robust to
+               sim uncertainty; rule in smc_specificity)}
+      2:
+        floors:
+          # OI-33 ruling (2026-09-10, "attempts are flawed"): the floor
+          # requires the gated motion to have EXECUTED — an evaluated
+          # conditional whose motion arm never ran is an attempt, not
+          # demonstrated state-derived motion (258 first-flight awards
+          # rested on unexecuted arms; the battery independently failed
+          # to corroborate them). The architecture count stays emitted
+          # as a diagnostic.
+          - {evidence: production.state_gated_drivetrain_executed,
+             op: ge, value: 1, scope: production, weight: primary,
+             inference: presence of EXECUTED state-gated motion}
+          - {evidence: battery.state_termination_events, op: ge, value: 2,
+             scope: any_test, weight: primary,
+             inference: replication of state-terminated motion
+               (the fraction stays descriptive — .10 bar RETRACTED)}
+          # computed_motion_params supporting floor REMOVED 2026-09-09:
+          # literal-vs-computed is not the construct distinction; it
+          # created an L0-via-supporting technicality (WREN-C008).
+          # Computed params are diagnostics now.
+  representation:
+    levels:
+      1:
+        floors:
+          - {evidence: production.structures_exercised, op: true,
+             scope: production, weight: primary,
+             inference: presence of exercised reusable structure}
+      2:
+        floors:
+          - {evidence: production.procedure_reused_or_parameterized,
+             op: true, scope: production, weight: primary,
+             inference: presence of reuse/parameterization — the
+               generalization signature}
+  task_state_regulation:
+    levels:
+      1:
+        floors:
+          - {evidence: battery.task_state_triggered_transition_count,
+             op: ge, value: 1, scope: any_test, weight: primary,
+             inference: presence of a task-event-triggered transition}
+          - {evidence: battery.completion_triggered_transition, op: true,
+             scope: any_test, weight: primary,
+             inference: presence of completion-cue use (one-action-chunk
+               bar, card-declared post_clear_bar_mm)}
+        negatives:
+          - {evidence: battery.clear_without_post_change, op: ge, value: 2,
+             inference: replication of cue non-use under opportunity}
+      2:
+        floors:
+          - {evidence: battery.task_transitions_ge2_tests, op: ge, value: 2,
+             scope: cross_test, weight: primary, conjunct: true,
+             inference: within-test replication (>=2 transitions,
+               regulation re-arms) x cross-condition replication
+               (>=2 tests, not world-specific) — REQUIRED, as is the
+               return floor (the ruled conjunction means BOTH)}
+          - {evidence: battery.task_phase_return_any, op: true,
+             scope: any_test, weight: primary, conjunct: true,
+             inference: presence of the charter-named re-engagement —
+               REQUIRED alongside the transition floor (the ruled
+               conjunction, passes 45%)}
+  recovery:
+    # R2 RESTRUCTURE (reviewer-ruled 2026-09-11): the scale scores the
+    # recovery PROCESS and its robustness — a corrective EVENT is not a
+    # process. Empirical grounding (FINDINGS 2026-09-10/11): corrective
+    # is perfectly contained in the cycle (0 runs cycle without it);
+    # the reflex-only class's retreats are terminal seams in runs that
+    # 85% fail their encounters — a one-time corrective-shaped
+    # excursion, not recovery. L0 is therefore NON-RECOVERING (both
+    # unanswered failure AND unsustained correction land there,
+    # verified zeros); the 1/2 axis is ROBUSTNESS (loop re-arms +
+    # cross-condition consistency). Failures stop being D-e negatives
+    # here and become the consistency constraint at L2.
+    evaluability: {evidence: battery.corrective_evaluated_tests,
+                   op: ge, value: 2, name: recovery_opportunity,
+                   u_reason: insufficient_deviation_opportunity}
+    verified_zero: true
+    levels:
+      1:
+        floors:
+          - {evidence: battery.reassessment_cycles_max, op: ge, value: 1,
+             scope: any_test, weight: primary,
+             inference: a CLOSED recovery loop — deviation, correction,
+               and EVIDENCED reassessment (the counter closes only when
+               reassessment follows, so one closed loop is already the
+               re-armed loop — trailing corrections never close, the
+               C114_020 finding 2026-09-11); condition-dependent
+               recovery permitted at this level}
+      2:
+        # Family-grain ruling (reviewer, 2026-09-11): L2 = the closed
+        # loop is NOT WORLD-SPECIFIC and robustness holds — the
+        # failure unit is the condition FAMILY, and a failure is an
+        # UNSURVIVED deviation (fall-off). An arrested, survived
+        # encounter is an ANSWERED deviation, never a failure — the
+        # failure condition itself is the counter-evidence (OI-37
+        # principle; retires the corrective_false choreography count
+        # and its arrested-survivor artifact, 25% of old Falses).
+        floors:
+          - {evidence: battery.reassessment_cycle_families, op: ge,
+             value: 2, scope: cross_test, weight: primary,
+             inference: cross-condition replication — the closed loop
+               appears in >=2 condition families (mirrors the ruled
+               TSR-2 shape)}
+          - {evidence: battery.unsurvived_deviation_families, op: le,
+             value: 1, scope: cross_test, weight: constraint,
+             conjunct: true,
+             inference: robustness — at most ONE condition family ever
+               defeats the loop (failure = an unsurvived deviation,
+               from the stays_on_island episode record)}

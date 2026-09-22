@@ -1,0 +1,103 @@
+# T5 heading perturbation (moderate — facing south, ~90 degrees off).
+# THE WORLD IS T1's, UNCHANGED — same 28 wall pieces, same
+# physics, same checks — so every evidence variable is
+# directly comparable across the perturbation; ONLY the
+# spawn heading differs. Card heading 270 (math 270); canonical west is 0.
+# IN-SIM PROBE: distance_found FALSE at the spawn pose; a 2.5m dead-reckon meets
+#   the BOUNDARY first and never contacts debris. This is a
+#   BOUNDARY encounter by construction — '0 cleared' here is a
+#   HEADING-DEPENDENCE signal, NOT a clearing-capability claim.
+# Clear rule (reviewer-ruled 2026-09-02, second revision — supersedes
+# both the OI-27 fraction-of-radius bar and the short-lived
+# direction-blind displacement rule): SLIP-BAND, boundary-relative —
+# a piece is cleared once PUSHED to within clear_slip_margin_mm INSIDE
+# the island edge (or beyond). Margin 200 = ONE BLOCK DIAMETER: a piece
+# within a diameter of the edge would in reality be pressing into its
+# outer-wall neighbours and shoving them off (the block-chain physics
+# the sim declares away). Probed 2026-09-02 over margins 125-400 on the
+# 101-program telemetry sample: correlations statistically flat across
+# 125-300 (T1 weight +.31-.35, coverage +.38-.41), so the value is
+# chosen on physical interpretability, reviewer-revisable. Rationale: in the real environment
+# blocks interact — early clearing happens far from the edge through
+# block-on-block chains pushing outer pieces off; only as blocks
+# deplete must the robot drive near the edge. Our declared
+# no-piece-piece-interaction sim represents that with a generous slip
+# zone on the integrated worlds (T1/T4/T5). The BOUNDARY family
+# (T2/T3/T6) keeps the TIGHT extension bar (55% of radius past the
+# edge) — those tests exist to read precise block-at-boundary
+# handling. Pushing a piece around the interior earns nothing
+# (engagement covers that).
+# Constructed deterministically by scripts/generate_battery_cards.py.
+scenario_id: t5b_moderate
+family: t5_heading_perturbation
+description: T1's wall, spawn heading 270 (moderate — facing south, ~90 degrees off).
+goal: [clear_debris_zone, remain_on_island]
+testcase_physics: {push_model: kinematic, loop_unroll: 60,
+                    clear_rule: slip_band, clear_slip_margin_mm: 200,
+                    loop_clock_hz: 60, time_budget_s: 60, invariance_budget_s: 30}
+# B-1 forward-design constraint (SENSOR_TESTBATTERY §6.2):
+evidence:
+  variables: [debris_responsivity, proportion_engaged, proportion_cleared, robot_on_island]
+applies: whole_run
+# Episode segmentation thresholds (B-2, reviewer-ruled 2026-08-31:
+# card-declared, values DERIVED from this card's environment):
+#   engagement_radius_mm = piece body_radius 100 + contact pin 125.4
+#   retreat_mm           = the family's retreat trigger (400)
+#   band_mm              = the ring width (89, production calibration)
+#   stall_mm             = the measured frozen threshold (50)
+#   divergence_mm        = the detects check's divergence bound (100)
+#   post_clear_bar_mm     = completion-cue bar (2026-09-05): a post-clear
+#                          behaviour change within this travel reads as
+#                          USING the disappearance cue (~one drive_for-150
+#                          chunk, the corpus idiom; first-pass, revisable)
+#   eye_reach_mm          = down-eye forward offset (robot card) — the
+#                          encounter band is band_mm + eye_reach so an
+#                          ENCOUNTER = the eye entered the ring (boundary
+#                          became sensor-relevant), not the CENTRE within
+#                          the band; a program that stops precisely short
+#                          then reads as a SURVIVED encounter, not as none
+#                          (reviewer 2026-09-01).
+#   exit_grace_mm        = the production card's physical half-diagonal
+#                          (on_island_xy_mm 71.2) — an encounter is failed
+#                          only when the CENTRE exceeds the edge by more
+#                          (reviewer ruling 2026-09-01: same permissible
+#                          extension in both instruments)
+episode_rules: {engagement_radius_mm: 225.4, retreat_mm: 400, band_mm: 89,
+                stall_mm: 50, divergence_mm: 100, turn_change_deg: 15,
+                exit_grace_mm: 71.2, eye_reach_mm: 35, post_clear_bar_mm: 150}
+spawn: {heading: 270}
+pieces:
+  wall_01: {x: -470, y: 1028, body_radius_mm: 100}
+  wall_02: {x: -275, y: 921, body_radius_mm: 100}
+  wall_03: {x: -80, y: 815, body_radius_mm: 100}
+  wall_04: {x: 116, y: 708, body_radius_mm: 100}
+  wall_05: {x: 311, y: 602, body_radius_mm: 100}
+  wall_06: {x: 506, y: 495, body_radius_mm: 100}
+  wall_07: {x: 506, y: 268, body_radius_mm: 100}
+  wall_08: {x: 506, y: 41, body_radius_mm: 100}
+  wall_09: {x: 506, y: -187, body_radius_mm: 100}
+  wall_10: {x: 506, y: -414, body_radius_mm: 100}
+  wall_11: {x: 506, y: -641, body_radius_mm: 100}
+  wall_12: {x: 311, y: -744, body_radius_mm: 100}
+  wall_13: {x: 116, y: -846, body_radius_mm: 100}
+  wall_14: {x: -78, y: -949, body_radius_mm: 100}
+  wall_15: {x: -273, y: -1051, body_radius_mm: 100}
+  wall_16: {x: -468, y: -1154, body_radius_mm: 100}
+  wall_17: {x: -670, y: -1036, body_radius_mm: 100}
+  wall_18: {x: -872, y: -918, body_radius_mm: 100}
+  wall_19: {x: -1073, y: -801, body_radius_mm: 100}
+  wall_20: {x: -1275, y: -683, body_radius_mm: 100}
+  wall_21: {x: -1270, y: -439, body_radius_mm: 100}
+  wall_22: {x: -1265, y: -195, body_radius_mm: 100}
+  wall_23: {x: -1259, y: 50, body_radius_mm: 100}
+  wall_24: {x: -1254, y: 294, body_radius_mm: 100}
+  wall_25: {x: -1249, y: 538, body_radius_mm: 100}
+  wall_26: {x: -1054, y: 660, body_radius_mm: 100}
+  wall_27: {x: -860, y: 783, body_radius_mm: 100}
+  wall_28: {x: -665, y: 906, body_radius_mm: 100}
+checks:
+  - {name: detects,            rule: behavioral_divergence, divergence_mm: 100, facet: object_detection}
+  - {name: proportion_engaged, rule: proportion_engaged, facet: object_engagement}
+  - {name: proportion_cleared, rule: proportion_cleared, facet: push_execution}
+  - {name: stays_on_island,    rule: edge_encounters_survived, facet: edge_failure_handling,
+     goal: remain_on_island}

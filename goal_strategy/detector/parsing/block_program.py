@@ -110,7 +110,7 @@ BlockNodeIterator = "BlockNode"
 
 EVENT_HANDLER_PREFIXES = ("pg_events_",)
 
-# Block type sets are loaded from src/goal_strategy.detector/data/blocks.csv
+# Block type sets are loaded from src/goal_strategy_detector/data/blocks.csv
 # via block_registry.py.  To add or fix a block, edit the CSV — no code change needed.
 # The names below are re-exported so that existing imports from this module continue
 # to work unchanged.
@@ -179,28 +179,8 @@ class BlockProgram:
         Only traverses event_handler_stacks (active code).  Use
         iter_all_blocks_including_orphans() to include disconnected blocks.
         """
-        definitions = {}
-        for root in self.top_level_stacks:
-            if root.block_type == "procedures_definition" and root.children:
-                name = (root.children[0].mutation or {}).get("proccode")
-                if name and root.next is not None:
-                    definitions.setdefault(name, root.next)
-        pending = list(reversed(self.event_handler_stacks))
-        seen = set()
-        while pending:
-            node = pending.pop()
-            if id(node) in seen:
-                continue
-            seen.add(id(node))
-            yield node
-            if node.next is not None:
-                pending.append(node.next)
-            pending.extend(reversed(node.values))
-            pending.extend(reversed(node.children))
-            if node.block_type == "procedures_call":
-                body = definitions.get((node.mutation or {}).get("proccode"))
-                if body is not None:
-                    pending.append(body)
+        for root in self.event_handler_stacks:
+            yield from _dfs(root)
 
     def iter_all_blocks_including_orphans(self) -> "BlockNode":
         """Yield every BlockNode in the program including orphan stacks."""

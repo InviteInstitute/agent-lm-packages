@@ -62,7 +62,24 @@ The implementation and standalone transfer are complete. **Private-corpus equiva
 
 Behavior changes still require source-protocol corpus attribution and reviewer acceptance before replacing research baselines. `sim_unverified` flags rather than withholds numerical evidence; it is a descriptive implementation of the planned interpretation, not a resolved calibration question. Zero-velocity semantics retain their fallback with a flag until measured in VEX.
 
-Python 3.10 and 3.12 were tested, but actual downstream deployments still need to adopt the new Python 3.10 floor. Automatic raw-event telemetry pairing requires representative host lifecycle fixtures if requested later. B-1 expansion/fourth-channel composition, B-2 rubric scoring and feedback selection remain future features, as in the migration plan.
+Python 3.10 and 3.12 were tested, but actual downstream deployments still need to adopt the new Python 3.10 floor. Automatic raw-event telemetry pairing requires representative host lifecycle fixtures if requested later. Automatic fourth-channel composition into the goal rollup and feedback selection remain future features. Purpose-2 rubric scoring is no longer future work (see the Tier-2 gap closure below).
+
+## Tier-2 gap closure (2026-09-22)
+
+A comparison against current source HEAD (`cf0a715`), recorded in [PORT_COMPARISON.md](PORT_COMPARISON.md), found that the full 19-scenario battery and purpose-2 rubric scoring were physically present (byte-identical to source) and passing their tests, but neither exposed on the online API nor acknowledged by the docs. Actions taken:
+
+- Added `rubric_online.py`, composing per-run `DimensionEvidence` from the shared execution's code channel plus battery scenario evidence, routed through an in-memory CSV round-trip so the online scores match the offline sweep exactly. Rubric is PROVISIONAL and off by default.
+- Wired `include_rubric` through `goal_profile`, `goal_profile_from_content`, `goal_profile_from_run_event`, `goal_profiles_from_events`, `GoalProfileStream`, the result-cache key, and the serialized envelope (`result['rubric']`).
+- Added `tests/test_rubric_online.py` (7 tests): provisional envelope, all six dimensions, JSON-safety, cache isolation, determinism, census-decided golden levels, and batch/stream agreement.
+- Fixed three pre-existing defects found while verifying: the `include_battery` path called `run_battery(..., _execution=...)`, a kwarg it does not accept (battery worlds are separate simulations by design, so the argument was dropped); `rung_sweep.identity_columns()` was missing the `pipeline_version` and `playground` columns its own test asserts; and the shared-execution refactor had dropped the `prof.full_sim` / `prof.parsed_program` attachments that `rung_sweep` and `battery_sweep` read via `getattr`, which silently blanked the code channel of `stage2_code_evidence.csv` offline (restored in `profile.py`, matching source).
+- Corrected the README and MIGRATION_MAP status claims, and ported the live ECD reference `EVIDENCE_MODEL.md`.
+
+## Purpose-1 rollup channel + agent-focused strip (2026-09-22)
+
+- Added the online purpose-1 goal ROLLUP as an opt-in `include_rollup` channel (`rollup_online.py`): all four goals (two banded from the battery via `banded_rollup`, two derived from the profile indicators), with the debris entry enriched by test proportion, simulated zone coverage, and telemetry weight. `tests/test_rollup_online.py` (8 tests) pins offline parity, the enrichment, and batch/stream agreement.
+- Made the battery run ONCE per call: one `collect_sims=True` report is shared by the `battery`, `rubric`, and `rollup` channels; the `battery` output is unchanged (collected artifacts stripped, byte-identical to a plain run). Verified by a monkeypatch call-count test.
+- Stripped the human-facing surface to keep this package agent-only: removed `viz/` (the Streamlit review apps AND the ported validation audit app) and `scripts/` (research maintenance/backfill tools), the four viz-only test modules, and one viz-touching assertion in `test_integration_repairs.py`; cleaned `README.md` and `pyproject.toml` (dropped the `goal-strategy-viz` extra, the `goal_strategy.viz` package and its data, and Streamlit/Plotly from `dev`). Core is one-directional (nothing in it imported viz/scripts), so the runtime is unaffected.
+- Realtime latency (uncached, configs warm, this machine): profile-only 3-8 ms; profile + rollup/rubric on typical programs ~80-120 ms; the battery-fed channels reach ~0.9-1.2 s on reactive (forever-loop sensing) programs, which is inherent to simulating a reactive controller across 19 designed worlds (`collect_sims` adds nothing). The result cache makes identical re-runs near-instant.
 
 ## Reproduce
 
