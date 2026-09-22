@@ -776,15 +776,20 @@ def _main() -> None:   # pragma: no cover — thin CLI
 
     ap = argparse.ArgumentParser(description="Run the sensor test-case battery "
                                              "over the corpus (eligible programs only)")
-    ap.add_argument("--parquet", default="data/final_code_states.parquet")
-    ap.add_argument("--out", default="testcases_report.csv")
+    from .paths import data_path
+
+    ap.add_argument("--parquet", default=str(data_path("final_code_states.parquet")))
+    ap.add_argument("--out", default=str(data_path("testcases_report.csv")))
     ap.add_argument("--playground", default="castle_crashers")
+    ap.add_argument("--configs-dir")
+    ap.add_argument("--scheduler", choices=["sequential", "cooperative"])
     args = ap.parse_args()
 
     import pandas as pd
     from .config import load_configs
+    from .serialize import PIPELINE_VERSION
 
-    cfg = load_configs(args.playground)
+    cfg = load_configs(args.playground, args.configs_dir)
     required = (cfg.card.get("corpus_filter") or {}).get("required_outcome_field")
     df = pd.read_parquet(args.parquet)
     rows = []
@@ -797,7 +802,8 @@ def _main() -> None:   # pragma: no cover — thin CLI
         xml = rec.get("workspace_xml")
         if not isinstance(xml, str) or not xml.strip():
             continue
-        report = run_battery(xml, pid, playground=args.playground)
+        report = run_battery(xml, pid, playground=args.playground,
+                             configs_dir=args.configs_dir, scheduler=args.scheduler)
         if not report.eligible:
             continue
         for s in report.scenarios:
@@ -819,12 +825,17 @@ def _main() -> None:   # pragma: no cover — thin CLI
                              "value": "", "capped": "",
                              "abstain_reason": "",
                              "annotation": "", "detail": ""})
+    for row in rows:
+        row.update(playground=args.playground, config_version=cfg.config_version,
+                   pipeline_version=PIPELINE_VERSION)
+    Path(args.out).parent.mkdir(parents=True, exist_ok=True)
     with open(args.out, "w", newline="") as f:
         writer = csv.DictWriter(f, fieldnames=["program_id", "scenario", "construct", "goal",
                                                "check", "facet", "status",
                                                "value", "capped",
                                                "abstain_reason",
-                                               "annotation", "detail"])
+                                               "annotation", "detail", "playground",
+                                               "config_version", "pipeline_version"])
         writer.writeheader()
         writer.writerows(rows)
     print(f"wrote {len(rows)} rows to {args.out}")
