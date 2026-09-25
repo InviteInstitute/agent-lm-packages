@@ -69,7 +69,8 @@ time**, playground output (`playground_params`), run metadata.
 
 Classify blocks of the parsed program against a **capability registry** —
 evaluated over the **executable block set** (ruled, D3): orphan stacks are
-excluded; hat stacks are expected to count as executable, though hat
+excluded; hat stacks and the My Block bodies they call count as executable
+(`BlockProgram.live_stacks`, disabled blocks already dropped), though hat
 arbitration itself is still open (OI-7).
 
 | class | meaning | today's analogue [2026-08-26] |

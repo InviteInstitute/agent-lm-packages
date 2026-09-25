@@ -12,33 +12,66 @@ from log_parser_delta_engine import (
     generate_readable_text, generate_readable_lines,
     smart_delta_engine,
 )
+from log_parser_delta_engine.humanize import ORPHAN_HEADER
 from learner_models import (
-    compute_run_edit_distances, detect_run_triggers, detect_run_triggers_by_playground,
+    compute_run_edit_distances, detect_run_triggers,
     detect_inactive_trigger, segment_session, detect_switches, INACTIVE_RUN_INDEX,
 )
 
-SIMPLE_XML = (
-    '<xml>'
-    '  <block type="events_whenStarted" id="hat" x="0" y="0">'
-    '    <statement name="STACK"><block type="pg_drive" id="child"/></statement>'
-    '  </block>'
-    '  <block type="pg_turn" id="loose" x="200" y="200"/>'
-    '</xml>'
-)
+NS = 'xmlns="https://developers.google.com/blockly/xml"'
+MUT_NS = 'xmlns="http://www.w3.org/1999/xhtml"'
 
-RICH_XML = (
-    '<xml>'
-    '<block type="pg_events_when_started" id="hat">'
-    '<next><block type="pg_drivetrain_drive_for" id="drive">'
-    '<field name="DIRECTION">fwd</field><field name="UNITS">mm</field>'
-    '<value name="AMOUNT"><shadow type="math_number"><field name="NUM">200</field></shadow></value>'
-    '</block>'
-    '<next><block type="pg_drivetrain_turn_for" id="turn">'
-    '<field name="DIRECTION">right</field><field name="UNITS">deg</field>'
-    '<value name="AMOUNT"><shadow type="math_number"><field name="NUM">90</field></shadow></value>'
-    '</block></next>'
-    '</next></block></xml>'
-)
+
+def ws(*blocks, ns=True):
+    """A workspace XML string. Real VEX workspaces are namespaced, so that's the
+    default; ns=False covers hand-written un-namespaced XML."""
+    return f"<xml {NS if ns else ''}>" + "".join(blocks) + "</xml>"
+
+
+def num(slot, n):
+    return (f'<value name="{slot}"><shadow type="math_number">'
+            f'<field name="NUM">{n}</field></shadow></value>')
+
+
+def drive(bid, mm, nxt="", extra=""):
+    return (f'<block type="pg_drivetrain_drive_for" id="{bid}" {extra}>'
+            '<field name="DIRECTION">fwd</field><field name="UNITS">mm</field>'
+            + num("AMOUNT", mm) + (f"<next>{nxt}</next>" if nxt else "") + "</block>")
+
+
+def turn(bid, deg, nxt="", extra=""):
+    return (f'<block type="pg_drivetrain_turn_for" id="{bid}" {extra}>'
+            '<field name="TURNDIRECTION">right</field>'
+            + num("ANGLE", deg) + (f"<next>{nxt}</next>" if nxt else "") + "</block>")
+
+
+def started(body="", bid="hat", extra=""):
+    return (f'<block type="pg_events_when_started" id="{bid}" {extra}>'
+            + (f"<next>{body}</next>" if body else "") + "</block>")
+
+
+def definition(name, body, bid="def"):
+    return (f'<block type="procedures_definition" id="{bid}">'
+            '<statement name="custom_block"><shadow type="procedures_prototype">'
+            f'<mutation {MUT_NS} proccode="{name}" argumentids="[]"/></shadow></statement>'
+            f"<next>{body}</next></block>")
+
+
+def call(name, bid="call", nxt=""):
+    return (f'<block type="procedures_call" id="{bid}">'
+            f'<mutation {MUT_NS} proccode="{name}" argumentids="[]"/>'
+            + (f"<next>{nxt}</next>" if nxt else "") + "</block>")
+
+
+def sections(prompt):
+    """Split a compact prompt into its (active, orphaned) body lines."""
+    lines = prompt.split("\n")
+    i = lines.index("[Orphaned]")
+    return lines[1:i], lines[i + 1:]
+
+
+SIMPLE_XML = ws(started(drive("child", 100)), turn("loose", 90))
+RICH_XML = ws(started(drive("drive", 200, turn("turn", 90))))
 
 
 # ---------------------------------------------------------------------------
@@ -47,27 +80,120 @@ RICH_XML = (
 def test_compact_prompt_basic():
     prompt = generate_compact_prompt(SIMPLE_XML)
     assert prompt is not None
-    assert "whenStarted" in prompt and "drive" in prompt
+    assert "events_when_started" in prompt and "drive_for" in prompt
     assert "[Active]" in prompt and "[Orphaned]" in prompt
 
 
 def test_compact_prompt_orphan_split():
-    prompt = generate_compact_prompt(SIMPLE_XML)
-    lines = prompt.split("\n")
-    active_section = lines.index("[Active]")
-    orphan_section = lines.index("[Orphaned]")
-    active_block = lines[active_section + 1]
-    orphan_block = lines[orphan_section + 1]
-    assert "whenStarted" in active_block
-    assert "turn" in orphan_block
+    active, orphaned = sections(generate_compact_prompt(SIMPLE_XML))
+    assert "events_when_started" in active[0]
+    assert any("drivetrain_drive_for" in ln for ln in active)
+    assert orphaned == [" drivetrain_turn_for (TURNDIRECTION=right,ANGLE=90)"]
 
 
-def test_compact_prompt_value_literals():
-    prompt = generate_compact_prompt(RICH_XML)
-    assert "AMOUNT=200" in prompt
-    assert "AMOUNT=90" in prompt
-    assert "DIRECTION=fwd" in prompt
-    assert "DIRECTION=right" in prompt
+def test_compact_prompt_value_literals_on_namespaced_xml():
+    # Real VEX XML is namespaced; the shadow literal lookup used to miss it and drop
+    # every number from the prompt.
+    for xml in (RICH_XML, ws(started(drive("drive", 200, turn("turn", 90))), ns=False)):
+        prompt = generate_compact_prompt(xml)
+        assert "AMOUNT=200" in prompt and "ANGLE=90" in prompt
+        assert "DIRECTION=fwd" in prompt and "TURNDIRECTION=right" in prompt
+
+
+def test_compact_prompt_sequence_stays_at_one_depth():
+    # A next chain is a sequence, not nesting: it must not staircase. Each stack
+    # opens at depth 1 and its sequence sits at depth 2, so stacks never run together.
+    xml = ws(started(drive("drive", 200, turn("turn", 90))), started(drive("x", 5), bid="h2"))
+    active, _ = sections(generate_compact_prompt(xml))
+    assert active == [
+        " events_when_started",
+        "  drivetrain_drive_for (DIRECTION=fwd,UNITS=mm,AMOUNT=200)",
+        "  drivetrain_turn_for (TURNDIRECTION=right,ANGLE=90)",
+        " events_when_started",
+        "  drivetrain_drive_for (DIRECTION=fwd,UNITS=mm,AMOUNT=5)",
+    ]
+
+
+def test_compact_prompt_bodies_indent_and_else_is_labeled():
+    xml = ws(started(
+        '<block type="pg_control_if_then_else" id="if">'
+        '<value name="CONDITION"><block type="pg_sensing_bumper" id="b">'
+        '<field name="BUMPER">leftbumper</field></block></value>'
+        f'<statement name="SUBSTACK">{drive("d", 10)}</statement>'
+        f'<statement name="SUBSTACK2">{turn("t", 45)}</statement></block>'))
+    active, _ = sections(generate_compact_prompt(xml))
+    assert active == [
+        " events_when_started",
+        "  control_if_then_else",
+        "   sensing_bumper (BUMPER=leftbumper)",
+        "   drivetrain_drive_for (DIRECTION=fwd,UNITS=mm,AMOUNT=10)",
+        "  else:",
+        "   drivetrain_turn_for (TURNDIRECTION=right,ANGLE=45)",
+    ]
+
+
+def test_compact_prompt_connected_reporter_covers_shadow():
+    # Blockly writes the covered shadow BEFORE the connected block; the block is the
+    # real input and its stale default must not leak into the fields.
+    xml = ws(started(
+        '<block type="pg_control_wait_until" id="w"><value name="CONDITION">'
+        '<block type="pg_operator_comparison" id="cmp"><field name="COMPARISON">==</field>'
+        '<value name="NUM1"><shadow type="math_number"><field name="NUM">0</field></shadow>'
+        '<block type="pg_sensing_position_angle" id="ang"/></value>'
+        + num("NUM2", 180) + "</block></value></block>"))
+    prompt = generate_compact_prompt(xml)
+    assert "operator_comparison (COMPARISON===,NUM2=180)" in prompt
+    assert "sensing_position_angle" in prompt
+    assert "NUM1=0" not in prompt
+
+
+def test_compact_prompt_loose_broadcast_is_orphaned():
+    # "events_" in the type is not what makes a hat: broadcast is a stack block.
+    xml = ws(started(drive("a", 100)),
+             '<block type="pg_events_broadcast" id="b"><field name="BROADCAST_OPTION">m</field>'
+             f'<next>{drive("z", 900)}</next></block>')
+    active, orphaned = sections(generate_compact_prompt(xml))
+    assert not any("broadcast" in ln for ln in active)
+    assert orphaned[0] == " events_broadcast (BROADCAST_OPTION=m)"
+    assert any("AMOUNT=900" in ln for ln in orphaned)
+
+
+def test_compact_prompt_procedures_are_live_only_when_called():
+    called = ws(started(call("go")), definition("go", drive("d", 400)))
+    active, orphaned = sections(generate_compact_prompt(called))
+    assert "  procedures_call (PROC=go)" in active
+    assert " procedures_definition (PROC=go)" in active
+    assert orphaned == [" (empty)"]
+
+    uncalled = ws(started(drive("a", 100)), definition("go", drive("d", 400)))
+    active, orphaned = sections(generate_compact_prompt(uncalled))
+    assert not any("procedures" in ln for ln in active)
+    assert orphaned[0] == " procedures_definition (PROC=go)"
+
+
+def test_compact_prompt_procedure_called_from_orphan_stays_orphaned():
+    xml = ws(started(drive("a", 100)), turn("t", 10, call("go")),
+             definition("go", drive("d", 400)))
+    _, orphaned = sections(generate_compact_prompt(xml))
+    assert " procedures_definition (PROC=go)" in orphaned
+
+
+def test_compact_prompt_marks_disabled_and_counts_only_runnable():
+    xml = ws(started(drive("a", 100, turn("off", 90, drive("b", 50), extra='disabled="true"'))))
+    engine = smart_delta_engine()
+    engine.process_log({"content": {"project": {"workspace": xml}}})
+    prompt = engine.generate_compact_prompt()
+    assert "  drivetrain_turn_for (TURNDIRECTION=right,ANGLE=90) [disabled]" in prompt
+    assert "AMOUNT=50" in prompt                  # the block after it still runs
+    assert engine.get_total_blocks() == 4
+    assert engine.get_runnable_block_count() == 3
+
+
+def test_compact_prompt_disabled_hat_is_orphaned():
+    xml = ws(started(drive("a", 100), extra='disabled="true"'))
+    active, orphaned = sections(generate_compact_prompt(xml))
+    assert active == [" (empty)"]
+    assert orphaned[0] == " events_when_started [disabled]"
 
 
 def test_compact_prompt_empty_inputs():
@@ -84,14 +210,15 @@ def test_compact_prompt_from_content():
     content = {"project": {"workspace": SIMPLE_XML}}
     prompt = generate_compact_prompt_from_content(content)
     assert prompt is not None
-    assert "whenStarted" in prompt
+    assert "events_when_started" in prompt
 
 
 def test_compact_prompt_from_content_json_string():
     content = {"project": json.dumps({"workspace": SIMPLE_XML})}
     prompt = generate_compact_prompt_from_content(content)
     assert prompt is not None
-    assert "whenStarted" in prompt
+    assert "events_when_started" in prompt
+    assert generate_compact_prompt_from_project(json.dumps({"workspace": SIMPLE_XML})) == prompt
 
 
 def test_compact_prompt_from_content_empty():
@@ -124,111 +251,136 @@ def test_readable_empty_inputs():
     assert generate_readable_lines("") == []
 
 
+def test_readable_separates_orphans_from_live_code():
+    xml = ws(started(drive("a", 100)), turn("loose", 90),
+             '<block type="pg_events_broadcast" id="b"><field name="BROADCAST_OPTION">m</field></block>')
+    assert generate_readable_lines(xml) == [
+        "when started",
+        "drive for forward, mm, amount 100",
+        "",
+        ORPHAN_HEADER,
+        "  turn for right, angle 90",
+        "",
+        "  broadcast event m",
+    ]
+
+
+def test_readable_separates_concurrent_stacks():
+    xml = ws(started(drive("a", 100), bid="h1"), started(turn("t", 90), bid="h2"))
+    assert generate_readable_lines(xml) == [
+        "when started", "drive for forward, mm, amount 100", "",
+        "when started", "turn for right, angle 90",
+    ]
+
+
+def test_readable_only_orphans():
+    assert generate_readable_lines(ws(turn("t", 90))) == [ORPHAN_HEADER, "  turn for right, angle 90"]
+
+
+def test_readable_connected_reporter_covers_shadow():
+    xml = ws(started(
+        '<block type="pg_control_wait_until" id="w"><value name="CONDITION">'
+        '<block type="pg_operator_comparison"><field name="COMPARISON">==</field>'
+        '<value name="NUM1"><shadow type="math_number"><field name="NUM">0</field></shadow>'
+        '<block type="pg_sensing_position_angle"/></value>'
+        + num("NUM2", 180) + "</block></value></block>"))
+    line = generate_readable_lines(xml)[1]
+    assert line.startswith("wait until (") and "180)" in line
+    assert "(0 " not in line
+
+
+def test_readable_names_procedures():
+    xml = ws(started(call("go")), definition("go", drive("d", 400)))
+    assert generate_readable_lines(xml) == [
+        "when started", "call go", "", "define go", "drive for forward, mm, amount 400",
+    ]
+
+
+def test_readable_procedure_arguments_fill_placeholders():
+    xml = ws(started(
+        '<block type="procedures_call" id="c">'
+        f'<mutation {MUT_NS} proccode="drive %s steps" argumentids=\'["a1"]\'/>'
+        + num("a1", 3) + "</block>"),
+        '<block type="procedures_definition" id="d"><statement name="custom_block">'
+        '<shadow type="procedures_prototype">'
+        f'<mutation {MUT_NS} proccode="drive %s steps" argumentids=\'["a1"]\' '
+        'argumentnames=\'["count"]\'/></shadow></statement></block>')
+    lines = generate_readable_lines(xml)
+    assert "call drive 3 steps" in lines
+    assert "define drive (count) steps" in lines
+
+
+def test_readable_loose_operator_renders_as_expression():
+    xml = ws(started(),
+             '<block type="pg_operator_and_or"><field name="CHECK">and</field>'
+             '<value name="OPERAND1"><block type="pg_sensing_bumper">'
+             '<field name="BUMPER">leftbumper</field></block></value>'
+             '<value name="OPERAND2"><block type="pg_sensing_optical_near_object">'
+             '<field name="OPTICAL">fronteye</field></block></value></block>')
+    assert generate_readable_lines(xml)[-1] == \
+        "  (Bumper pressed leftbumper and eye near object fronteye)"
+
+
+def test_readable_unknown_types_get_a_derived_name():
+    xml = ws(started('<block type="pg_drivetrain_go_to_object">'
+                     '<field name="OBJECT">minerals</field></block>'))
+    assert generate_readable_lines(xml)[1] == "drivetrain go to object minerals"
+
+
+def test_readable_marks_disabled_blocks():
+    xml = ws(started(drive("a", 100, turn("off", 90, extra='disabled="true"'))))
+    assert generate_readable_lines(xml)[-1] == "turn for right, angle 90 (disabled)"
+
+
 # ---------------------------------------------------------------------------
-# log_parser_delta_engine: delta path
+# log_parser_delta_engine: event stream
 # ---------------------------------------------------------------------------
-def test_delta_create_with_initial_fields():
+def _vex_event(event_type, workspace, block_event=None):
+    """The shape of a real VEX log event: the full project rides on every block
+    event, as a JSON string, next to a thin blockEventData delta."""
+    content = {"eventType": event_type,
+               "project": json.dumps({"mode": "Blocks", "workspace": workspace})}
+    if block_event is not None:
+        content["blockEventData"] = json.dumps(block_event)
+    return {"content": json.dumps(content)}
+
+
+def test_process_log_rebuilds_from_the_event_snapshot():
     engine = smart_delta_engine()
-
-    def send(evt):
-        engine.process_log({"content": json.dumps(evt)})
-
-    send({"eventType": "blockEventData", "blockEventData": json.dumps({
-        "eventType": "create", "blockID": "b1", "blockType": "pg_drivetrain_drive_for",
-        "fields": [{"name": "DIRECTION", "value": "fwd"}, {"name": "UNITS", "value": "mm"}]})})
-
-    assert engine.blocks["b1"]["fields"]["DIRECTION"] == "fwd"
-    assert engine.blocks["b1"]["fields"]["UNITS"] == "mm"
-
-
-def test_delta_shadow_change_propagates():
-    engine = smart_delta_engine()
-
-    def send(evt):
-        engine.process_log({"content": json.dumps(evt)})
-
-    send({"eventType": "blockEventData", "blockEventData": json.dumps({
-        "eventType": "create", "blockID": "hat", "blockType": "pg_events_when_started"})})
-    send({"eventType": "blockEventData", "blockEventData": json.dumps({
-        "eventType": "create", "blockID": "b1", "blockType": "pg_drivetrain_drive_for",
-        "fields": [{"name": "DIRECTION", "value": "fwd"}]})})
-    send({"eventType": "blockEventData", "blockEventData": json.dumps({
-        "eventType": "create", "blockID": "s1", "blockType": "math_number_shadow",
-        "fields": [{"name": "NUM", "value": "200"}]})})
-    send({"eventType": "blockEventData", "blockEventData": json.dumps({
-        "eventType": "move", "blockID": "b1", "newInfo": {"parent": "hat", "type": "next"}})})
-    send({"eventType": "blockEventData", "blockEventData": json.dumps({
-        "eventType": "move", "blockID": "s1", "newInfo": {"parent": "b1", "type": "value", "inputName": "AMOUNT"}})})
-
-    assert engine.blocks["b1"]["fields"]["AMOUNT"] == "200"
-
-    send({"eventType": "blockEventData", "blockEventData": json.dumps({
-        "eventType": "change", "blockID": "s1", "name": "NUM", "newValue": "300"})})
-
-    assert engine.blocks["s1"]["fields"]["NUM"] == "300"
-    assert engine.blocks["b1"]["fields"]["AMOUNT"] == "300"
-
-
-def test_delta_delete_cascade():
-    engine = smart_delta_engine()
-
-    def send(evt):
-        engine.process_log({"content": json.dumps(evt)})
-
-    send({"eventType": "blockEventData", "blockEventData": json.dumps({
-        "eventType": "create", "blockID": "hat", "blockType": "pg_events_when_started"})})
-    send({"eventType": "blockEventData", "blockEventData": json.dumps({
-        "eventType": "create", "blockID": "b1", "blockType": "pg_drive"})})
-    send({"eventType": "blockEventData", "blockEventData": json.dumps({
-        "eventType": "create", "blockID": "b2", "blockType": "pg_turn"})})
-    send({"eventType": "blockEventData", "blockEventData": json.dumps({
-        "eventType": "move", "blockID": "b1", "newInfo": {"parent": "hat", "type": "next"}})})
-    send({"eventType": "blockEventData", "blockEventData": json.dumps({
-        "eventType": "move", "blockID": "b2", "newInfo": {"parent": "b1", "type": "next"}})})
-
-    assert "b1" in engine.blocks and "b2" in engine.blocks
-
-    send({"eventType": "blockEventData", "blockEventData": json.dumps({
-        "eventType": "delete", "blockID": "b1"})})
-
-    assert "b1" not in engine.blocks
-    assert "b2" not in engine.blocks
-
-
-def test_delta_orphan_recompute_on_move():
-    engine = smart_delta_engine()
-
-    def send(evt):
-        engine.process_log({"content": json.dumps(evt)})
-
-    send({"eventType": "blockEventData", "blockEventData": json.dumps({
-        "eventType": "create", "blockID": "hat", "blockType": "pg_events_when_started"})})
-    send({"eventType": "blockEventData", "blockEventData": json.dumps({
-        "eventType": "create", "blockID": "b1", "blockType": "pg_drive"})})
-
-    assert engine.orphan_status["b1"] is True
-
-    send({"eventType": "blockEventData", "blockEventData": json.dumps({
-        "eventType": "move", "blockID": "b1", "newInfo": {"parent": "hat", "type": "next"}})})
-
-    assert engine.orphan_status["b1"] is False
+    # A session starts from a workspace the stream never saw being built.
+    engine.process_log(_vex_event("blockCreated", ws(started(), turn("t", 90)),
+                                  {"eventType": "create", "blockID": "t",
+                                   "blockType": "pg_drivetrain_turn_for"}))
+    assert engine.orphan_status["t"] is True
+    # Real moves name the new parent but not the slot; the snapshot has the answer.
+    engine.process_log(_vex_event("blockMoved", ws(started(turn("t", 90))),
+                                  {"eventType": "move", "blockID": "t",
+                                   "newInfo": {"parent": "hat"}}))
+    assert engine.orphan_status["t"] is False
     assert engine.get_runnable_block_count() == 2
+    # Real changes carry fieldName, and shadows never get a create event.
+    engine.process_log(_vex_event("blockChanged", ws(started(turn("t", 45))),
+                                  {"eventType": "change", "blockID": "shadow",
+                                   "blockType": "math_number", "fieldName": "NUM",
+                                   "oldValue": 90, "newValue": 45}))
+    assert engine.blocks["t"]["fields"]["ANGLE"] == "45"
+    engine.process_log(_vex_event("blockDeleted", ws(started()),
+                                  {"eventType": "delete", "blockID": "t"}))
+    assert "t" not in engine.blocks and engine.get_total_blocks() == 1
 
 
-def test_delta_block_counts_exclude_shadows():
+def test_process_log_accepts_dict_content_and_ignores_events_without_a_project():
     engine = smart_delta_engine()
-
-    def send(evt):
-        engine.process_log({"content": json.dumps(evt)})
-
-    send({"eventType": "blockEventData", "blockEventData": json.dumps({
-        "eventType": "create", "blockID": "hat", "blockType": "pg_events_when_started"})})
-    send({"eventType": "blockEventData", "blockEventData": json.dumps({
-        "eventType": "create", "blockID": "s1", "blockType": "math_number_shadow",
-        "fields": [{"name": "NUM", "value": "5"}]})})
-
-    assert engine.get_total_blocks() == 1
-    assert "s1" not in [b for b in engine.blocks if not engine.blocks[b].get("is_shadow")]
+    engine.process_log({"content": {"eventType": "runProject",
+                                    "project": {"workspace": RICH_XML}}})
+    assert engine.get_runnable_block_count() == 3
+    engine.process_log({"content": json.dumps({"eventType": "playgroundReset"})})
+    engine.process_log({"content": "not json"})
+    engine.process_log({})
+    assert engine.get_runnable_block_count() == 3
+    engine.process_log({"content": {"eventType": "newProject", "project": {"workspace": ""}}})
+    assert engine.blocks == {} and engine.generate_compact_prompt() == \
+        "[Active]\n (empty)\n[Orphaned]\n (empty)"
 
 
 # ---------------------------------------------------------------------------

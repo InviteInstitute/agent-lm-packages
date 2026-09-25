@@ -66,7 +66,9 @@ imputed and flagged where unobserved) — reactive controllers execute
 for real iteration counts instead of unroll caps.
 
 **Liveness (what code counts as evidence).** Only code that could
-execute: detached (orphan) stacks are excluded at parse; statically
+execute: hat stacks plus the My Block definitions they call
+(`BlockProgram.live_stacks`); detached (orphan) stacks, uncalled My Blocks
+and disabled blocks are excluded at parse; statically
 unreachable code (post-`forever` chains) is excluded from every
 parse-side count (OI-33). Variables that CLAIM execution require it
 (trace/path witness); parse-only variables accept

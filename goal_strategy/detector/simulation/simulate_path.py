@@ -1186,9 +1186,10 @@ def simulate_path(
     # Part A (task 3): broadcast receivers execute inline at their broadcast
     # site, keyed on BROADCAST_OPTION — never in the top-level document-order
     # loop (that would run them twice, or at the wrong time).
-    # OI-23 procedures build (2026-08-24): definitions parse as orphan
-    # stacks (their prototype shadow carries proccode); register bodies so
-    # calls execute them inline. First definition of a name wins.
+    # OI-23 procedures build (2026-08-24): definitions are never threads
+    # (called ones parse into procedure_stacks, uncalled ones are orphans;
+    # the prototype shadow carries proccode); register bodies so calls
+    # execute them inline. First definition of a name wins.
     for root in program.top_level_stacks:
         if root.block_type == "procedures_definition" and root.children:
             name = ((root.children[0].mutation or {}).get("proccode")

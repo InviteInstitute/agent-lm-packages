@@ -1,402 +1,248 @@
 """
 Rebuilds a student's VEX block workspace to see what their code currently looks like.
 
-There are two ways in: replay the create/move/delete/change events one at a time as
-they stream in, or bootstrap straight from a project's saved workspace XML. Either
-path lands in the same place, three flat maps: every block, who's parented to whom,
-and which blocks are "orphans" (not wired up under a hat block, so they'll never run).
-generate_compact_prompt turns that into a short pseudo-code listing suitable for an
-LLM prompt.
+Every VEX log event (blockCreated, blockMoved, blockChanged, blockDeleted, runProject,
+...) carries the whole project, workspace XML included, in `content.project`. That
+snapshot is the truth, so process_log rebuilds from it on every event rather than
+replaying the event's block delta: the deltas in real logs are too thin to replay (a
+move names the new parent but not which slot it went into, shadow blocks never get a
+create event, and a session starts from a workspace nobody saw being built).
+
+The rebuilt state is three flat maps: every block, who's parented to whom, and which
+blocks are "orphans" (they can never run). What counts as live is decided by
+liveness.py, the same rules the readable renderer uses. generate_compact_prompt turns
+that into a short pseudo-code listing suitable for an LLM prompt.
 
 Stdlib only (json + xml.etree) by design, no external dependencies.
 """
 import json
 import xml.etree.ElementTree as ET
 
+from .liveness import (
+    HAT_BLOCK_TYPES,
+    child_block,
+    is_disabled,
+    procedure_name,
+    split_stacks,
+    strip_namespaces,
+    value_input,
+)
+
+# Labels for statement slots, so the two sides of an if/else don't blur together.
+_STMT_LABEL = {"SUBSTACK2": "else"}
+
 
 class smart_delta_engine:
-    # These are the "hat" blocks, the ones that can actually start a program
-    # (event handlers, procedure definitions). At the top of the workspace only a
-    # hat counts as live code, anything else just sitting up there is an orphan.
-    HAT_BLOCK_PATTERNS = ('events_', 'procedures_definition')
+    # Kept for callers that read it; the hat list itself lives in liveness.py.
+    HAT_BLOCK_TYPES = HAT_BLOCK_TYPES
 
     def __init__(self):
-        self.blocks = {}         # block_id -> {type, x, y, fields, is_shadow}
+        self.blocks = {}         # block_id -> {type, x, y, fields, is_shadow, disabled}
         self.parent_map = {}     # parent_id -> [{child_id, edge_type, slot}, ...]
-        self.orphan_status = {}  # block_id -> True if it's NOT reachable from a hat
-
-    def _register_block(self, block_id, block_type, x=None, y=None, fields=None,
-                        is_shadow=False):
-        self.blocks[block_id] = {
-            'type': block_type,
-            'x': x,
-            'y': y,
-            'fields': fields or {},
-            'is_shadow': is_shadow,
-        }
-        self.orphan_status[block_id] = True
-
-    def _link(self, parent_id, child_id, edge_type, slot=None):
-        self.parent_map.setdefault(parent_id, []).append(
-            {'child_id': child_id, 'edge_type': edge_type, 'slot': slot}
-        )
+        self.orphan_status = {}  # block_id -> True if it can never run
+        self.roots = []          # top-level block ids, document order
 
     def process_log(self, log_event):
-        """Take one VEX log event and fold it into the tracked workspace. A
-        loadProject/newProject wipes everything and rebuilds from the project XML,
-        and block-level create/move/delete/change events mutate the maps. Unparseable
-        or irrelevant events are dropped quietly."""
-        try:
-            content = json.loads(log_event.get('content', '{}'))
-        except Exception:
+        """Fold one VEX log event into the tracked workspace. Any event whose content
+        carries a `project` rebuilds the workspace from that project's XML (an empty
+        workspace clears it). Events without a project, and anything unparseable, are
+        ignored."""
+        content = log_event.get('content') if isinstance(log_event, dict) else None
+        if isinstance(content, str):
+            try:
+                content = json.loads(content)
+            except ValueError:
+                return
+        if not isinstance(content, dict) or 'project' not in content:
             return
-
-        event_type = content.get('eventType')
-
-        # Load or new project -> start over and rebuild straight from the XML.
-        if event_type in ('loadProject', 'newProject'):
-            self._bootstrap_from_xml(content)
+        project = content.get('project')
+        if isinstance(project, str):
+            try:
+                project = json.loads(project) if project.strip() else {}
+            except ValueError:
+                return
+        if not isinstance(project, dict):
             return
+        self._bootstrap_from_xml(project.get('workspace') or '')
 
-        # Anything else is a single block-level change applied on top of current state.
-        raw_block_data = content.get('blockEventData')
-        if not raw_block_data:
-            return
+    def _bootstrap_from_xml(self, xml_string):
+        """Clear state and rebuild the maps from a workspace XML string. Unparseable
+        XML leaves the workspace empty.
 
-        try:
-            block_data = json.loads(raw_block_data)
-        except Exception:
-            return
-
-        b_type = block_data.get('eventType')
-        block_id = block_data.get('blockID')
-
-        if not block_id:
-            return
-
-        if b_type == 'create':
-            block_type = block_data.get('blockType', '')
-            is_shadow = 'shadow' in block_type.lower()
-            init_fields = {}
-            for f in block_data.get('fields', []) or []:
-                if isinstance(f, dict) and 'name' in f:
-                    init_fields[f['name']] = f.get('value', '')
-            self._register_block(block_id, block_type, fields=init_fields,
-                                 is_shadow=is_shadow)
-            self._recompute_orphans()
-
-        elif b_type == 'move':
-            self._sever_from_parents(block_id)
-
-            new_info = block_data.get('newInfo', {})
-
-            if 'parent' in new_info:
-                new_parent = new_info['parent']
-                edge_type = new_info.get('type', 'next')
-                slot = new_info.get('inputName') or new_info.get('slot')
-                self._link(new_parent, block_id, edge_type, slot)
-
-                # Attached to a parent now, so floating x/y no longer apply.
-                if block_id in self.blocks:
-                    self.blocks[block_id]['x'] = None
-                    self.blocks[block_id]['y'] = None
-
-                # If a shadow block moved into a value slot, fold its field value
-                # into the parent's fields so it shows in the compact prompt.
-                if (edge_type == 'value' and slot
-                        and self.blocks.get(block_id, {}).get('is_shadow')
-                        and new_parent in self.blocks):
-                    shadow_fields = self.blocks[block_id].get('fields', {})
-                    if shadow_fields:
-                        parent_fields = self.blocks[new_parent]['fields']
-                        for sf_name, sf_val in shadow_fields.items():
-                            parent_fields[slot] = sf_val
-
-                self._recompute_orphans()
-
-            elif 'coordinate' in new_info:
-                coord = new_info['coordinate']
-                if block_id in self.blocks:
-                    self.blocks[block_id]['x'] = coord.get('x')
-                    self.blocks[block_id]['y'] = coord.get('y')
-
-                self._recompute_orphans()
-
-        elif b_type == 'delete':
-            self._sever_from_parents(block_id)
-            self._delete_recursive(block_id, set())
-            self._recompute_orphans()
-
-        elif b_type == 'change':
-            field_name = block_data.get('name')
-            new_value = block_data.get('newValue')
-            if block_id in self.blocks and field_name:
-                self.blocks[block_id]['fields'][field_name] = new_value
-                # If a shadow block parented into a value slot changes, propagate
-                # the change to the parent's folded field to keep the compact
-                # prompt in sync.
-                if self.blocks[block_id].get('is_shadow'):
-                    for p_id, entries in self.parent_map.items():
-                        for entry in entries:
-                            if entry['child_id'] == block_id and entry['edge_type'] == 'value':
-                                slot = entry['slot']
-                                if slot and p_id in self.blocks:
-                                    self.blocks[p_id]['fields'][slot] = new_value
-
-    def _sever_from_parents(self, block_id):
-        keys_to_remove = []
-        for p_id, children in self.parent_map.items():
-            removed = False
-            for entry in list(children):
-                if entry['child_id'] == block_id:
-                    children.remove(entry)
-                    removed = True
-            if removed and not children:
-                keys_to_remove.append(p_id)
-        for k in keys_to_remove:
-            del self.parent_map[k]
-
-    def _bootstrap_from_xml(self, content):
-        """Clear state and rebuild the maps by walking the project's workspace XML
-        from scratch. A block at the root is only live if it's a hat, and every
-        child inherits its parent's orphan status. Shadow blocks inside <value>
-        slots contribute their field values to the parent block's fields (e.g. the
-        NUM on a math_number shadow becomes AMOUNT on the drive block that holds
-        it), and real reporter blocks in value slots get tracked as children with
-        edge_type='value'."""
+        Real reporter blocks in value slots are tracked as children with
+        edge_type='value'. A slot that only holds a shadow (an inline literal like the
+        200 in "drive 200 mm") contributes its value to the parent block's fields
+        instead, keyed by slot name (AMOUNT=200). When a reporter is connected over a
+        shadow, the reporter is the input and the covered shadow is ignored."""
         self.blocks.clear()
         self.parent_map.clear()
         self.orphan_status.clear()
-
-        project_raw = content.get('project', '{}')
-        try:
-            project = json.loads(project_raw) if isinstance(project_raw, str) else project_raw
-        except Exception:
-            project = {}
-
-        xml_string = project.get('workspace', '')
+        self.roots = []
         if not xml_string:
             return
-
         try:
             root = ET.fromstring(xml_string)
-        except Exception:
+        except ET.ParseError:
             return
+        strip_namespaces(root)
 
-        def _strip_ns(tag):
-            return tag.split('}')[-1]
-
-        def _extract_fields(block_elem):
-            fields = {}
-            for child in block_elem:
-                if _strip_ns(child.tag) == 'field':
-                    fname = child.get('name')
-                    if fname:
-                        fields[fname] = child.text or ''
-            return fields
-
-        def _extract_shadow_value(value_elem):
-            """If a <value> slot holds a <shadow> with a literal field, return the
-            field's text. Return None for non-literal shadows."""
-            for child in value_elem:
-                ctag = _strip_ns(child.tag)
-                if ctag == 'shadow':
-                    f = child.find('field')
-                    if f is not None:
-                        return (f.text or '').strip()
-            return None
-
-        def traverse(node, current_parent=None, edge_type=None, slot=None):
-            tag_name = _strip_ns(node.tag)
-
-            if tag_name == 'block':
-                b_id = node.get('id') or f'gen_{len(self.blocks)}'
-                b_type = node.get('type', 'unknown')
-                b_x = node.get('x')
-                b_y = node.get('y')
-                fields = _extract_fields(node)
-
-                self._register_block(
-                    b_id, b_type,
-                    x=float(b_x) if b_x else None,
-                    y=float(b_y) if b_y else None,
-                    fields=fields,
-                )
-
-                if current_parent is None:
-                    is_hat = any(p in b_type for p in self.HAT_BLOCK_PATTERNS)
-                    self.orphan_status[b_id] = not is_hat
-                else:
-                    self.orphan_status[b_id] = self.orphan_status.get(current_parent, False)
-                    self._link(current_parent, b_id, edge_type, slot)
-
-                for child in node:
-                    child_tag = _strip_ns(child.tag)
-                    if child_tag == 'value':
-                        cslot = child.get('name')
-                        shadow_val = _extract_shadow_value(child)
-                        if shadow_val is not None:
-                            self.blocks[b_id]['fields'][cslot or 'value'] = shadow_val
-                        traverse(child, b_id, 'value', cslot)
-                    elif child_tag in ('next', 'statement'):
-                        cslot = child.get('name') if child_tag == 'statement' else None
-                        traverse(child, b_id, child_tag, cslot)
-                    elif child_tag == 'field':
-                        pass  # already captured
-                    else:
-                        traverse(child, b_id, edge_type, slot)
-
-            elif tag_name == 'shadow':
-                pass  # value-slot shadows are captured into the parent's fields above
-
-            elif tag_name == 'value':
-                cslot = node.get('name')
-                shadow_val = _extract_shadow_value(node)
-                if shadow_val is not None and current_parent is not None:
-                    self.blocks[current_parent]['fields'][cslot or 'value'] = shadow_val
-                for child in node:
-                    traverse(child, current_parent, 'value', cslot)
-
-            else:
-                for child in node:
-                    traverse(child, current_parent, edge_type, slot)
-
-        traverse(root)
-
-    def _recompute_orphans(self):
-        """Rebuild orphan_status from scratch by walking down from hat roots. Called
-        after every delta move/delete/create so the active/orphan split stays correct
-        without relying on incremental cascade logic."""
-        self.orphan_status = {bid: True for bid in self.blocks}
-
-        all_children = set()
-        for entries in self.parent_map.values():
-            all_children.update(e['child_id'] for e in entries)
-
-        roots = [b for b in self.blocks if b not in all_children]
-        for r in roots:
-            is_hat = any(p in self.blocks[r]['type'] for p in self.HAT_BLOCK_PATTERNS)
-            if not is_hat:
+        active, orphaned = split_stacks(root)
+        live = {id(el) for el in active}
+        for top in root:
+            if top.tag != 'block':
                 continue
-            visited = set()
-            stack = [r]
-            while stack:
-                bid = stack.pop()
-                if bid in visited:
+            top_id = self._add_stack(top, orphan=id(top) not in live)
+            self.roots.append(top_id)
+
+    def _add_stack(self, top, orphan):
+        """Register a top-level block and everything under it. Returns its id."""
+        top_id = self._register(top, orphan)
+        pending = [(top, top_id)]
+        while pending:
+            el, el_id = pending.pop()
+            for container in el:
+                if container.tag == 'next':
+                    child = child_block(container)
+                    edge, slot = 'next', None
+                elif container.tag == 'statement':
+                    child = child_block(container)
+                    edge, slot = 'statement', container.get('name')
+                elif container.tag == 'value':
+                    child = value_input(container)
+                    edge, slot = 'value', container.get('name')
+                    if child is not None and child.tag == 'shadow':
+                        f = child.find('field')
+                        if f is not None:
+                            self.blocks[el_id]['fields'][slot or 'value'] = (f.text or '').strip()
+                        continue
+                else:
                     continue
-                visited.add(bid)
-                self.orphan_status[bid] = False
-                for entry in self.parent_map.get(bid, []):
-                    stack.append(entry['child_id'])
+                if child is None:
+                    continue
+                child_id = self._register(child, orphan)
+                self.parent_map.setdefault(el_id, []).append(
+                    {'child_id': child_id, 'edge_type': edge, 'slot': slot})
+                pending.append((child, child_id))
+        return top_id
 
-    def _delete_recursive(self, block_id, visited=None):
-        if visited is None:
-            visited = set()
-        if block_id in visited:
-            return
-        visited.add(block_id)
-
-        if block_id in self.blocks:
-            del self.blocks[block_id]
-        if block_id in self.orphan_status:
-            del self.orphan_status[block_id]
-
-        children = self.parent_map.pop(block_id, [])
-        for entry in children:
-            self._delete_recursive(entry['child_id'], visited)
+    def _register(self, el, orphan):
+        b_id = el.get('id') or f'gen_{len(self.blocks)}'
+        fields = {c.get('name'): c.text or '' for c in el
+                  if c.tag == 'field' and c.get('name')}
+        name = procedure_name(el)
+        if name:
+            fields['PROC'] = name
+        x, y = el.get('x'), el.get('y')
+        self.blocks[b_id] = {
+            'type': el.get('type', 'unknown'),
+            'x': float(x) if x else None,
+            'y': float(y) if y else None,
+            'fields': fields,
+            'is_shadow': el.tag == 'shadow',
+            'disabled': is_disabled(el),
+        }
+        self.orphan_status[b_id] = orphan
+        return b_id
 
     def get_runnable_block_count(self):
-        return sum(1 for b in self.blocks
-                   if not self.blocks[b].get('is_shadow')
-                   and not self.orphan_status.get(b, True))
+        """Blocks that can run: in a live stack and not disabled (nor inside a disabled
+        block's bodies or slots)."""
+        return len(self._runnable_ids())
+
+    def _runnable_ids(self):
+        runnable = set()
+        pending = [r for r in self.roots if not self.orphan_status.get(r, True)]
+        while pending:
+            b_id = pending.pop()
+            block = self.blocks.get(b_id)
+            if block is None:
+                continue
+            for entry in self.parent_map.get(b_id, []):
+                if entry['edge_type'] == 'next' or not block['disabled']:
+                    pending.append(entry['child_id'])
+            if not block['disabled'] and not block['is_shadow']:
+                runnable.add(b_id)
+        return runnable
 
     def get_total_blocks(self):
-        return sum(1 for b in self.blocks if not self.blocks[b].get('is_shadow'))
+        return sum(1 for b in self.blocks.values() if not b['is_shadow'])
 
     def generate_compact_prompt(self):
-        """Render the workspace as compact pseudo-code for an LLM. Root blocks are
-        split into two sections, [Active] (reachable from a hat block) and
-        [Orphaned], with each block printing its type and fields, indented by
-        nesting depth. Value-slot children (inline reporters like conditions and
-        sensor reads) render indented under their parent. Common VEX type prefixes
-        are stripped to keep the token count down."""
-        all_children = set()
-        for entries in self.parent_map.values():
-            all_children.update(e['child_id'] for e in entries)
+        """Render the workspace as compact pseudo-code for an LLM. Top-level stacks are
+        split into two sections, [Active] (can run: a hat stack or a called My Block)
+        and [Orphaned], in document order. Every stack starts at depth 1 and the rest
+        of its sequence sits at depth 2, so each depth-1 line opens a new stack.
+        Statement bodies and value-slot reporters indent one level under their block;
+        the next block in a sequence stays at the same depth. Each block prints its
+        type and fields, disabled blocks are marked [disabled], and common VEX type
+        prefixes are stripped to keep the token count down."""
+        active = [r for r in self.roots if not self.orphan_status.get(r, True)]
+        orphaned = [r for r in self.roots if self.orphan_status.get(r, True)]
 
-        roots = [b for b in self.blocks
-                 if b not in all_children and not self.blocks[b].get('is_shadow')]
-        roots.sort()
-
-        runnable_roots = [b for b in roots if not self.orphan_status.get(b, True)]
-        orphan_roots = [b for b in roots if self.orphan_status.get(b, True)]
-
-        def clean_type(raw):
-            """Drop the noisy VEX prefixes so the listing is shorter."""
-            for prefix in ('pg_', 'aim_', 'mixed_'):
-                if raw.startswith(prefix):
-                    return raw[len(prefix):]
-            return raw
-
-        def build_tree(block_id, depth, visited=None):
-            if visited is None:
-                visited = set()
-            if block_id in visited:
-                return ""
-            visited.add(block_id)
-
-            block = self.blocks.get(block_id)
-            if block is None:
-                return ""
-            name = clean_type(block.get('type', '?'))
-            fields = block.get('fields', {})
-
-            parts = [name]
-            if fields:
-                parts.append("(" + ",".join(f'{k}={v}' for k, v in fields.items()) + ")")
-
-            line = " " * depth + " ".join(parts) + "\n"
-
-            for entry in self.parent_map.get(block_id, []):
-                child_id = entry['child_id']
-                if self.blocks.get(child_id, {}).get('is_shadow'):
-                    continue
-                edge = entry['edge_type']
-                child_depth = depth + 1 if edge == 'value' else depth + 1
-                line += build_tree(child_id, child_depth, visited)
-            return line
-
-        lines = []
-        lines.append("[Active]")
-        if runnable_roots:
-            for r in runnable_roots:
-                lines.append(build_tree(r, 1).rstrip())
-        else:
+        lines = ["[Active]"]
+        for r in active:
+            self._render_chain(self._render_block(r, 1, lines), 2, lines)
+        if not active:
             lines.append(" (empty)")
-
         lines.append("[Orphaned]")
-        if orphan_roots:
-            for o in orphan_roots:
-                lines.append(build_tree(o, 1).rstrip())
-        else:
+        for r in orphaned:
+            self._render_chain(self._render_block(r, 1, lines), 2, lines)
+        if not orphaned:
             lines.append(" (empty)")
-
         return "\n".join(lines)
+
+    def _render_chain(self, block_id, depth, lines):
+        """Render `block_id` and the rest of its next chain at `depth`."""
+        seen = set()
+        while block_id is not None and block_id not in seen:
+            seen.add(block_id)
+            block_id = self._render_block(block_id, depth, lines)
+
+    def _render_block(self, block_id, depth, lines):
+        """Render one block with its statement bodies and value reporters one level
+        deeper. Returns the id of the next block in its sequence, or None."""
+        block = self.blocks.get(block_id)
+        if block is None:
+            return None
+        lines.append(" " * depth + _compact_line(block))
+        following = None
+        for entry in self.parent_map.get(block_id, []):
+            if entry['edge_type'] == 'next':
+                following = entry['child_id']
+                continue
+            label = _STMT_LABEL.get(entry['slot']) if entry['edge_type'] == 'statement' else None
+            if label:
+                lines.append(" " * depth + label + ":")
+            self._render_chain(entry['child_id'], depth + 1, lines)
+        return following
+
+
+def _clean_type(raw):
+    """Drop the noisy VEX prefixes so the listing is shorter."""
+    for prefix in ('pg_', 'aim_', 'mixed_'):
+        if raw.startswith(prefix):
+            return raw[len(prefix):]
+    return raw
+
+
+def _compact_line(block):
+    parts = [_clean_type(block.get('type', '?'))]
+    fields = block.get('fields', {})
+    if fields:
+        parts.append("(" + ",".join(f'{k}={v}' for k, v in fields.items()) + ")")
+    if block.get('disabled'):
+        parts.append("[disabled]")
+    return " ".join(parts)
 
 
 def generate_compact_prompt(xml_string):
-    """One-shot compact prompt from a workspace XML string. Creates a fresh engine,
-    bootstraps it, and returns the rendered prompt. Returns None if there's no
+    """One-shot compact prompt from a workspace XML string. Returns None if there's no
     input or the workspace has no blocks."""
     if not xml_string:
         return None
-
     engine = smart_delta_engine()
-
-    # Wrap the XML in a fake project dict so _bootstrap_from_xml can be reused.
-    engine._bootstrap_from_xml({'project': {'workspace': xml_string}})
-
+    engine._bootstrap_from_xml(xml_string)
     if not engine.blocks:
         return None
-
     return engine.generate_compact_prompt()
+

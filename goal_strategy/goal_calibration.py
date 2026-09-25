@@ -26,7 +26,10 @@ import csv
 from pathlib import Path
 
 from .config import configs_root
-from .paths import data_path
+from .paths import data_path, require_data
+
+# The run-dataset CSVs calibration_table reads (under data_path("ccp_run_dataset")).
+DATA_FILES = ("stage3_battery.csv", "stage2_rungs.csv", "stage2_fidelity.csv")
 
 _STATUS_SCORE = {"pass": 1.0, "conditional": 0.5, "fail": 0.0}
 
@@ -35,7 +38,7 @@ TARGET_COLS = ["coverage_value", "coverage_rung", "weight_cleared",
 
 
 def _read(path):
-    with open(path) as fh:
+    with open(require_data(path)) as fh:
         yield from csv.DictReader(fh)
 
 

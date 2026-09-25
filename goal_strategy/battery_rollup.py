@@ -32,6 +32,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .config import _DEFAULT_CONFIGS_DIR, _load_yaml
+from .paths import data_path
 
 
 @dataclass(frozen=True)
@@ -120,9 +121,8 @@ def roi_probability(report, playground: str = "castle_crashers",
     try:
         import pandas as pd
         from .goal_calibration import predict
-        path = Path(artifact_path) if artifact_path else (
-            Path(_DEFAULT_CONFIGS_DIR).parent / "data" / "ccp_run_dataset"
-            / "purpose1_calibration.json")
+        path = Path(artifact_path) if artifact_path else data_path(
+            "ccp_run_dataset", "purpose1_calibration.json")
         if not path.exists():
             return None
         art = json.loads(path.read_text())

@@ -16,12 +16,17 @@ reviewer):
   later in the path than the wait's first appearance;
 - a procedures_call inside an exercised loop/conditional body is counted
   as exercised (calls emit no trace event of their own);
+- a called My Block body is executable code: its blocks join the census, and
+  their loop / conditional ancestry continues through each live call site
+  (the body runs where it is called);
 - state-gated motion counts a CONTINUOUS drive/turn whose immediate
   next block is a sensing wait_until.
 """
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+
+from .detector.parsing.block_program import procedure_name
 
 _SENSING_PREFIXES = ("pg_sensing_",)
 _SENSING_HATS = ("pg_events_optical_detect_object", "pg_events_when_bumper")
@@ -120,22 +125,62 @@ def _walk_values_only(node):
         yield from _walk_values_only(value)
 
 
-def _loop_ancestor(node):
+def _call_sites(program, blocks) -> dict:
+    """id(node) -> the procedures_call nodes that run it, for every
+    chain-level node of a called My Block definition (the definition and its
+    body's top-level next-chain). Deeper body nodes reach one of these by
+    following .parent. Only calls among `blocks` (live, not statically dead)
+    count."""
+    calls: dict = {}
+    for b in blocks:
+        if b.block_type == "procedures_call":
+            calls.setdefault(procedure_name(b), []).append(b)
+    sites: dict = {}
+    for definition in program.procedure_stacks:
+        callers = calls.get(procedure_name(definition), [])
+        node = definition
+        while node is not None:
+            sites[id(node)] = callers
+            node = node.next
+    return sites
+
+
+def _ancestor_paths(node, sites=None, _seen=frozenset()):
+    """Every ancestor chain of `node`, nearest first. Inside a called My Block
+    body the chain continues from each call site, so a body block called from
+    inside a loop has that loop as an ancestor. Recursive calls are cut."""
+    chain = []
+    top = node
     p = node.parent
     while p is not None:
-        if p.block_type in _LOOP_TYPES:
-            return p
+        chain.append(p)
+        top = p
         p = p.parent
+    extended = False
+    for call in (sites or {}).get(id(top), ()):
+        if id(call) in _seen:
+            continue
+        for rest in _ancestor_paths(call, sites, _seen | {id(call)}):
+            extended = True
+            yield chain + [call] + rest
+    if not extended:
+        yield chain
+
+
+def _loop_ancestor(node, sites=None):
+    for path in _ancestor_paths(node, sites):
+        for p in path:
+            if p.block_type in _LOOP_TYPES:
+                return p
     return None
 
 
-def _body_ancestor(node):
+def _body_ancestor(node, sites=None):
     """Nearest loop OR conditional ancestor (for procedure-call coordination)."""
-    p = node.parent
-    while p is not None:
-        if p.block_type in _LOOP_TYPES or p.block_type in _CONDITIONAL_TYPES:
-            return p
-        p = p.parent
+    for path in _ancestor_paths(node, sites):
+        for p in path:
+            if p.block_type in _LOOP_TYPES or p.block_type in _CONDITIONAL_TYPES:
+                return p
     return None
 
 
@@ -151,7 +196,7 @@ def calibration_audit(program, geometry_mm: "list[float]",
     if dead is None:
         dead = statically_dead_ids(program)
     lits = []
-    for root in program.event_handler_stacks:
+    for root in program.live_stacks:
         for b in _walk(root):
             if b.block_type in _MOTION_PARAM_BLOCKS[:2]:   # drive_for/turn_for? distances only
                 if b.block_type != "pg_drivetrain_drive_for":
@@ -212,7 +257,8 @@ def statically_dead_ids(program) -> set:
     OI-33 liveness ruling (2026-09-10): parse-only evidence walks only
     code that could execute in the playground — reachable-but-untaken
     branches stay in (they could run); post-forever chains cannot.
-    Detached stacks are already excluded upstream (orphan_stacks)."""
+    Detached stacks and uncalled My Blocks are already excluded upstream
+    (orphan_stacks); called My Block bodies are swept like any live stack."""
     dead: set = set()
 
     def _sub(n):
@@ -235,7 +281,7 @@ def statically_dead_ids(program) -> set:
                 return
             cur = cur.next
 
-    for root in program.event_handler_stacks:
+    for root in program.live_stacks:
         _sweep(root, False)
     return dead
 
@@ -252,7 +298,7 @@ def fixed_motion_vocabulary(program, dead: set | None = None) -> dict:
     if dead is None:
         dead = statically_dead_ids(program)
     drives, turns = [], []
-    for root in program.event_handler_stacks:
+    for root in program.live_stacks:
         for b in _walk(root):
             if b.block_type not in ("pg_drivetrain_drive_for",
                                     "pg_drivetrain_turn_for"):
@@ -394,7 +440,7 @@ def smc_lower_columns(program, geometry_mm: "list[float]",
 
 
 def code_evidence(program, sim) -> CodeEvidence:
-    executable = list(program.event_handler_stacks)
+    executable = list(program.live_stacks)
     # OI-33 liveness ruling (2026-09-10): the census and every
     # parse-side count walk only code that could execute — post-forever
     # chains are out (trace-derived facts are unaffected: dead blocks
@@ -403,13 +449,14 @@ def code_evidence(program, sim) -> CodeEvidence:
     blocks = [b for root in executable for b in _walk(root)
               if b.block_id not in _dead]
     by_id = {b.block_id: b for b in blocks}
+    sites = _call_sites(program, blocks)
 
     sensing_blocks = [b for b in blocks if _is_sensing(b.block_type)]
     sensing_in_executable = bool(sensing_blocks)
     # hats are recurrent by semantics (edge-triggered re-arming); reporters
     # are recurrent when a loop encloses them
     sensing_in_recurrent = any(
-        b.block_type in _SENSING_HATS or _loop_ancestor(b) is not None
+        b.block_type in _SENSING_HATS or _loop_ancestor(b, sites) is not None
         for b in sensing_blocks)
 
     has_loops = any(b.block_type in _LOOP_TYPES for b in blocks)
@@ -475,7 +522,7 @@ def code_evidence(program, sim) -> CodeEvidence:
         node = by_id.get(blk)
         if node is None or not _subtree_has_sensing(node):
             continue
-        loop = _loop_ancestor(node)
+        loop = _loop_ancestor(node, sites)
         if loop is not None and loop.block_id in loops_run:
             relations.append(f"live_conditional_in_loop:{blk}")
     for b in blocks:
@@ -486,12 +533,12 @@ def code_evidence(program, sim) -> CodeEvidence:
                 relations.append(f"sensing_terminated_loop:{b.block_id}")
     for blk, n in wait_releases.items():
         node = by_id[blk]
-        loop = _loop_ancestor(node)
+        loop = _loop_ancestor(node, sites)
         if n >= 1 and loop is not None and loop.block_id in loops_run:
             relations.append(f"sensing_wait_in_loop:{blk}")
     for b in blocks:
         if b.block_type == "procedures_call":
-            anc = _body_ancestor(b)
+            anc = _body_ancestor(b, sites)
             if anc is not None and (anc.block_id in loops_run
                                     or anc.block_id in arm_seqs):
                 relations.append(f"procedure_in_construct:{b.block_id}")
@@ -575,13 +622,10 @@ def code_evidence(program, sim) -> CodeEvidence:
     exercised_conditionals = len(arm_seqs)
 
     def _depth(node):
-        d = 0
-        p = node
-        while p is not None:
-            if p.block_type in _LOOP_TYPES or p.block_type in _CONDITIONAL_TYPES:
-                d += 1
-            p = p.parent
-        return d
+        return max(sum(1 for p in [node] + path
+                       if p.block_type in _LOOP_TYPES
+                       or p.block_type in _CONDITIONAL_TYPES)
+                   for path in _ancestor_paths(node, sites))
     max_depth = max((_depth(b) for b in blocks), default=0)
 
     state_termination = bool(wait_releases) or any(
@@ -602,7 +646,7 @@ def code_evidence(program, sim) -> CodeEvidence:
     for b in blocks:
         if not b.block_type.startswith(_MOTION_PREFIX):
             continue
-        anc = _body_ancestor(b)
+        anc = _body_ancestor(b, sites)
         while anc is not None:
             if anc.block_type in _CONDITIONAL_TYPES \
                     and _subtree_has_sensing(anc) \
@@ -617,7 +661,7 @@ def code_evidence(program, sim) -> CodeEvidence:
                              or s.get_field("BUMPER") or "")
                         gated_sensors.add(f"{s.block_type}[{f}]")
                 break
-            anc = _body_ancestor(anc)
+            anc = _body_ancestor(anc, sites)
     computed_params = 0
     for b in blocks:
         if b.block_type in _MOTION_PARAM_BLOCKS:
@@ -636,8 +680,6 @@ def code_evidence(program, sim) -> CodeEvidence:
             proc_calls[code] = proc_calls.get(code, 0) + 1
             if (mut.get("argumentnames") or "[]") not in ("", "[]"):
                 parameterized += 1
-        elif b.block_type == "procedures_definition":
-            pass
     procedure_metrics = {
         "calls": sum(proc_calls.values()),
         "distinct": len(proc_calls),
@@ -680,7 +722,6 @@ def code_evidence(program, sim) -> CodeEvidence:
         _chains_from(root)
     grams: dict[tuple, int] = {}
     for chain in chains:
-        seen_here = set()
         for i in range(len(chain) - 2):
             g = tuple(chain[i:i + 3])
             grams[g] = grams.get(g, 0) + 1

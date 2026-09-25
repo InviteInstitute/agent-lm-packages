@@ -9,7 +9,6 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from goal_strategy.detector.parsing.block_program import BlockProgram
-from goal_strategy.detector.parsing.parse_blocks import linearize
 
 
 @dataclass(frozen=True)

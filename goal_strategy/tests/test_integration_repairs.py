@@ -161,10 +161,6 @@ def test_zero_velocity_preserves_existing_behavior_with_uncertainty():
     assert coop(xml).net_displacement_from_spawn == pytest.approx(200)
 
 
-@pytest.mark.xfail(reason="engine port-forward 2026-09-17: a sensor reachable only "
-                   "through a procedure call no longer counts toward battery "
-                   "qualification in the current harness. Faithful to upstream vex; "
-                   "queued for the port owner (§6 flag-and-queue).", strict=False)
 def test_procedure_only_sensor_qualifies_for_battery():
     from goal_strategy.tests.test_oi23_builds import _definition, _call
     sensor = '<block type="pg_control_wait_until"><value name="CONDITION"><block type="pg_sensing_bumper" id="sensor"><field name="BUMPER">leftbumper</field></block></value></block>'
