@@ -13,9 +13,20 @@ pytest.importorskip("pandas")
 
 
 @pytest.fixture(scope="module")
-def table():
+def data_dir():
+    from goal_strategy.goal_calibration import DATA_FILES
+    from goal_strategy.paths import data_path
+    d = data_path("ccp_run_dataset")
+    missing = [str(d / f) for f in DATA_FILES if not (d / f).is_file()]
+    if missing:
+        pytest.skip("Private goal data unavailable: " + ", ".join(missing))
+    return d
+
+
+@pytest.fixture(scope="module")
+def table(data_dir):
     from goal_strategy.goal_calibration import calibration_table
-    return calibration_table()
+    return calibration_table(str(data_dir))
 
 
 def test_table_structure(table):
@@ -38,7 +49,7 @@ def test_loose_sample_keeps_all_verdicts(table):
     assert len(verd) >= 2 or table["has_telemetry"].sum() == 0
 
 
-def test_abstentions_are_nan_not_zero():
+def test_abstentions_are_nan_not_zero(table, data_dir):
     """Plan §4: an abstained CHECK is UNOBSERVED (NaN, never 0). Since
     stays_on_island became an independent encounter measure (2026-09-01)
     abstention is PER-CHECK, not per-scenario: a T1 run may abstain
@@ -47,19 +58,15 @@ def test_abstentions_are_nan_not_zero():
     off the sweep CSV: wherever a row carries an abstain_reason, the
     corresponding table cell must be NaN."""
     import csv
-    from pathlib import Path
 
-    from goal_strategy.goal_calibration import calibration_table
-    table = calibration_table().set_index("run_id")
-    data = Path(__file__).resolve().parent.parent / "data" / "ccp_run_dataset"
+    table = table.set_index("run_id")
     checked = 0
-    with open(data / "stage3_battery.csv") as fh:
+    with open(data_dir / "stage3_battery.csv") as fh:
         for r in csv.DictReader(fh):
             if not r.get("abstain_reason") or r["run_id"] not in table.index:
                 continue
             col = f"{r['scenario']}__{r['check']}"
             if col in table.columns:
-                import math
                 v = table.loc[r["run_id"], col]
                 assert (isinstance(v, float) and math.isnan(v)), \
                     (r["run_id"], col, v, r["abstain_reason"])

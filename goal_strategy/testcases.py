@@ -44,8 +44,6 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Optional
 
-import yaml
-
 from goal_strategy.detector.parsing.parse_blocks import parse_workspace
 from goal_strategy.detector.simulation.simulate_path import (
     PlaygroundContext, _point_in_convex_polygon, _point_segment_dist,
@@ -53,6 +51,7 @@ from goal_strategy.detector.simulation.simulate_path import (
 )
 
 from .config import _DEFAULT_CONFIGS_DIR, _load_yaml
+from .paths import data_path, require_data
 from .indicators import _segment_closest
 
 # Block types whose information the main sim cannot fully evidence — code
@@ -165,7 +164,7 @@ def _constructs(program) -> list[dict]:
     timed by the baseline's first-evaluation trace) and hats (armed from step
     0, so they materialize at 0)."""
     out, seen = [], set()
-    for root in program.event_handler_stacks:
+    for root in program.live_stacks:
         is_hat_root = root.block_type in ("pg_events_optical_detect_object",
                                           "pg_events_when_bumper")
         if is_hat_root and root.block_id not in seen:
@@ -190,7 +189,7 @@ def _constructs(program) -> list[dict]:
 
 def qualifying_blocks(program) -> list[str]:
     found = []
-    for root in program.event_handler_stacks:
+    for root in program.live_stacks:
         for block in _iter_blocks(root):
             bt = block.block_type
             if bt in found:
@@ -198,7 +197,7 @@ def qualifying_blocks(program) -> list[str]:
             if bt in _SENSOR_QUALIFIERS_EXACT or \
                     any(bt.startswith(p) for p in _SENSOR_QUALIFIER_PREFIXES):
                 found.append(bt)
-    for root in program.event_handler_stacks:
+    for root in program.live_stacks:
         for block in _iter_blocks(root):
             if block.block_type in ("pg_sensing_optical_color",
                                     "pg_sensing_optical_detected_color_is"):
@@ -597,7 +596,7 @@ def downeye_only_sensing(program) -> bool:
     the same field-aware rule as `_constructs`.)"""
     if qualifying_blocks(program):
         return False
-    for root in program.event_handler_stacks:
+    for root in program.live_stacks:
         for block in _iter_blocks(root):
             if block.block_type in ("pg_sensing_optical_color",
                                     "pg_sensing_optical_detected_color_is"):
@@ -776,7 +775,7 @@ def _main() -> None:   # pragma: no cover — thin CLI
 
     ap = argparse.ArgumentParser(description="Run the sensor test-case battery "
                                              "over the corpus (eligible programs only)")
-    ap.add_argument("--parquet", default="data/final_code_states.parquet")
+    ap.add_argument("--parquet", default=str(data_path("final_code_states.parquet")))
     ap.add_argument("--out", default="testcases_report.csv")
     ap.add_argument("--playground", default="castle_crashers")
     args = ap.parse_args()
@@ -786,7 +785,7 @@ def _main() -> None:   # pragma: no cover — thin CLI
 
     cfg = load_configs(args.playground)
     required = (cfg.card.get("corpus_filter") or {}).get("required_outcome_field")
-    df = pd.read_parquet(args.parquet)
+    df = pd.read_parquet(require_data(args.parquet))
     rows = []
     for rec in df.to_dict("records"):
         params = rec.get("playground_params")

@@ -25,8 +25,10 @@ from __future__ import annotations
 import csv
 from pathlib import Path
 
-_ROOT = Path(__file__).resolve().parent.parent.parent
-_DATA = _ROOT / "data" / "ccp_run_dataset"
+from .paths import data_path, require_data
+
+# The run-dataset CSVs calibration_table reads (under data_path("ccp_run_dataset")).
+DATA_FILES = ("stage3_battery.csv", "stage2_rungs.csv", "stage2_fidelity.csv")
 
 _STATUS_SCORE = {"pass": 1.0, "conditional": 0.5, "fail": 0.0}
 
@@ -35,7 +37,7 @@ TARGET_COLS = ["coverage_value", "coverage_rung", "weight_cleared",
 
 
 def _read(path):
-    with open(path) as fh:
+    with open(require_data(path)) as fh:
         yield from csv.DictReader(fh)
 
 
@@ -45,7 +47,7 @@ def calibration_table(data_dir: str | None = None):
     (`<scenario>__<check>`), plus `<scenario>__abstain` reason columns
     and `<scenario>__capped` markers."""
     import pandas as pd
-    d = Path(data_dir) if data_dir else _DATA
+    d = Path(data_dir) if data_dir else data_path("ccp_run_dataset")
 
     # --- battery predictors, per run (identical for identical programs) ---
     batt: dict[str, dict] = {}
@@ -121,8 +123,8 @@ if __name__ == "__main__":   # pragma: no cover
 def coverage_edges(playground: str = "castle_crashers") -> list:
     """The CDZ cut points, read from the goals card — never hardcoded."""
     import yaml
-    card = yaml.safe_load(open(_ROOT / "configs" / "goals"
-                               / f"{playground}.yaml"))
+    from .config import configs_root
+    card = yaml.safe_load(open(configs_root() / "goals" / f"{playground}.yaml"))
     for goal in card.get("goals", []):
         for ind in (goal.get("indicators") or []) + \
                 (goal.get("attainment") or []) + (goal.get("intent") or []):

@@ -1,9 +1,11 @@
 """Parse Blockly workspace XML into a BlockProgram IR.
 
-VENDORING STATUS — no longer byte-identical to VEX_model_tracing (OI-14 fix,
-reviewer-authorised 2026-08-18): the <value> branch now prefers a connected
-<block> over the obscured <shadow> default, per Blockly convention. This is the
-only divergence in this file.
+VENDORING STATUS — no longer byte-identical to VEX_model_tracing:
+  * OI-14 fix (reviewer-authorised 2026-08-18): the <value> branch prefers a
+    connected <block> over the obscured <shadow> default, per Blockly convention.
+  * Liveness: hats are the explicit HAT_BLOCK_TYPES set (not a "pg_events_"
+    prefix, which also caught broadcast blocks), called My Block definitions are
+    live (procedure_stacks), and disabled blocks are dropped at parse time.
 
 The Blockly XML schema uses namespace https://developers.google.com/blockly/xml.
 All tag lookups require the fully-qualified name, e.g. ``{ns}block``.
@@ -23,11 +25,19 @@ Building on the pattern in learner_model_pipeline/src/preprocess_events.py
 
 from __future__ import annotations
 
-import copy
 import xml.etree.ElementTree as ET
 from typing import Optional
 
-from .block_program import BlockField, BlockNode, BlockProgram, classify_block
+from .block_program import (
+    PROCEDURE_CALL,
+    PROCEDURE_DEFINITION,
+    BlockField,
+    BlockNode,
+    BlockProgram,
+    _dfs,
+    classify_block,
+    procedure_name,
+)
 
 _NS = "https://developers.google.com/blockly/xml"
 _B = f"{{{_NS}}}"   # namespace prefix shorthand
@@ -76,51 +86,132 @@ def parse_workspace(xml_str: str, program_id: str) -> Optional[BlockProgram]:
     # ------------------------------------------------------------------ #
     # 2. Parse top-level block stacks
     # ------------------------------------------------------------------ #
-    top_level_stacks: list[BlockNode] = []
-    event_handler_stacks: list[BlockNode] = []
-    orphan_stacks: list[BlockNode] = []
-    total = active = orphan = 0
-
+    # Each stack is parsed as it executes (disabled blocks dropped) to decide
+    # liveness. A stack that turns out to be an orphan is re-parsed as
+    # authored, disabled blocks included: nothing in it runs either way, and
+    # the orphan view should show what is actually on the canvas.
+    executed: list[tuple[ET.Element, Optional[BlockNode], int]] = []
     for block_el in root.findall(_TAG_BLOCK):
-        node = _parse_block_el(block_el, parent=None)
-        if node is None:
-            continue
-        top_level_stacks.append(node)
-        stack_count = _count_nodes(node)
-        total += stack_count
+        dropped = [0]
+        node = _parse_block_el(block_el, parent=None, disabled=dropped)
+        executed.append((block_el, node, dropped[0]))
 
-        if classify_block(node.block_type) == "event_handler":
-            event_handler_stacks.append(node)
-            active += stack_count
+    # ------------------------------------------------------------------ #
+    # 3. Liveness: hat stacks, then the My Block definitions they call
+    # ------------------------------------------------------------------ #
+    event_handler_stacks, procedure_stacks, _ = _split_live(
+        [node for _, node, _ in executed if node is not None])
+    live_ids = {id(n) for n in event_handler_stacks + procedure_stacks}
+    top_level_stacks: list[BlockNode] = []
+    orphan_stacks: list[BlockNode] = []
+    disabled_count = 0
+    for block_el, node, dropped in executed:
+        if node is not None and id(node) in live_ids:
+            disabled_count += dropped
         else:
+            node = _parse_block_el(block_el, parent=None)
+            if node is None:
+                continue
             orphan_stacks.append(node)
-            orphan += stack_count
+        top_level_stacks.append(node)
+    active = sum(_count_nodes(n) for n in event_handler_stacks + procedure_stacks)
+    orphan = sum(_count_nodes(n) for n in orphan_stacks)
 
     return BlockProgram(
         program_id=program_id,
         variables=variables,
         top_level_stacks=top_level_stacks,
         event_handler_stacks=event_handler_stacks,
+        procedure_stacks=procedure_stacks,
         orphan_stacks=orphan_stacks,
-        total_block_count=total,
+        total_block_count=active + orphan,
         active_block_count=active,
         orphan_block_count=orphan,
+        disabled_block_count=disabled_count,
         raw_xml=xml_str,
     )
+
+
+def _split_live(stacks: list[BlockNode]) -> tuple[list, list, list]:
+    """Partition top-level stacks into (hat stacks, called procedure
+    definitions, orphans), each in document order.
+
+    A definition is live when a call to its proccode is reachable from a hat
+    stack, directly or through other called definitions. When a proccode is
+    defined twice, the first definition wins (the simulator resolves calls
+    the same way) and the duplicate is an orphan."""
+    hats = [n for n in stacks if classify_block(n.block_type) == "event_handler"]
+    definitions: dict[str, BlockNode] = {}
+    for n in stacks:
+        if n.block_type == PROCEDURE_DEFINITION:
+            name = procedure_name(n)
+            if name:
+                definitions.setdefault(name, n)
+
+    called: set[int] = set()
+    pending = list(hats)
+    while pending:
+        for block in _dfs(pending.pop()):
+            if block.block_type != PROCEDURE_CALL:
+                continue
+            definition = definitions.get(procedure_name(block) or "")
+            if definition is not None and id(definition) not in called:
+                called.add(id(definition))
+                pending.append(definition)
+
+    hat_ids = {id(n) for n in hats}
+    return (hats,
+            [n for n in stacks if id(n) in called],
+            [n for n in stacks if id(n) not in hat_ids and id(n) not in called])
 
 
 # ------------------------------------------------------------------ #
 # Internal helpers
 # ------------------------------------------------------------------ #
 
+def _is_disabled(el: ET.Element) -> bool:
+    """Blockly marks a disabled block with disabled="true" (older XML) or a
+    non-empty disabled-reasons attribute (newer XML)."""
+    return el.get("disabled") in ("true", "1") or bool(el.get("disabled-reasons"))
+
+
+def _count_dropped(el: ET.Element) -> int:
+    """Blocks and shadows owned by a disabled element: the element and its
+    statement / value subtrees, but not its <next> chain (which still runs)."""
+    count = 1
+    for child_el in el:
+        if child_el.tag in (_TAG_STATEMENT, _TAG_VALUE):
+            count += sum(1 for d in child_el.iter()
+                         if d.tag in (_TAG_BLOCK, _TAG_SHADOW))
+    return count
+
+
 def _parse_block_el(
     el: ET.Element,
     parent: Optional[BlockNode],
+    disabled: Optional[list] = None,
 ) -> Optional[BlockNode]:
-    """Recursively parse a <block> or <shadow> element into a BlockNode."""
+    """Recursively parse a <block> or <shadow> element into a BlockNode.
+
+    With `disabled` (a one-element counter), the tree is parsed as it
+    executes: a disabled block does not run, and neither does anything inside
+    its statement bodies or value slots, but the block after it still does
+    (Blockly's code generators skip a disabled block and continue with its
+    next). So a disabled block is dropped, its <next> chain is spliced into its
+    place, and the dropped blocks are counted. Without it (None), the tree is
+    parsed as authored."""
     block_type = el.get("type", "")
     block_id = el.get("id", "")
     if not block_type:
+        return None
+
+    if disabled is not None and _is_disabled(el):
+        disabled[0] += _count_dropped(el)
+        for child_el in el:
+            if child_el.tag == _TAG_NEXT:
+                for sub in child_el:
+                    if sub.tag in (_TAG_BLOCK, _TAG_SHADOW):
+                        return _parse_block_el(sub, parent=parent, disabled=disabled)
         return None
 
     node = BlockNode(
@@ -147,7 +238,8 @@ def _parse_block_el(
             # Next sibling in sequence — exactly one <block> or <shadow>
             for sub in child_el:
                 if sub.tag in (_TAG_BLOCK, _TAG_SHADOW):
-                    node.next = _parse_block_el(sub, parent=node.parent)
+                    node.next = _parse_block_el(sub, parent=node.parent,
+                                                disabled=disabled)
                     break
 
         elif tag == _TAG_STATEMENT:
@@ -156,7 +248,8 @@ def _parse_block_el(
             # branch identity must survive empty earlier slots.
             for sub in child_el:
                 if sub.tag in (_TAG_BLOCK, _TAG_SHADOW):
-                    body_root = _parse_block_el(sub, parent=node)
+                    body_root = _parse_block_el(sub, parent=node,
+                                                disabled=disabled)
                     if body_root is not None:
                         node.children.append(body_root)
                         node.statements[child_el.get("name", "")] = body_root
@@ -169,22 +262,28 @@ def _parse_block_el(
             # <block> is the active input and must win. Taking the first child
             # regardless of tag captured the stale shadow literal and silently
             # dropped the student's block (5 corpus programs, 15 slots).
+            # A disabled connected block contributes nothing, so the slot
+            # falls back to its shadow default.
             chosen = None
             for sub in child_el:
                 if sub.tag == _TAG_BLOCK:
+                    if disabled is not None and _is_disabled(sub):
+                        disabled[0] += _count_dropped(sub)
+                        continue
                     chosen = sub
                     break
                 if sub.tag == _TAG_SHADOW and chosen is None:
                     chosen = sub
             if chosen is not None:
-                value_node = _parse_block_el(chosen, parent=node)
+                value_node = _parse_block_el(chosen, parent=node,
+                                             disabled=disabled)
                 if value_node is not None:
                     node.values.append(value_node)
                     node.value_slots[child_el.get("name", "")] = value_node
 
         elif tag in (_TAG_BLOCK, _TAG_SHADOW):
             # Inline block (unusual but handle gracefully)
-            inline = _parse_block_el(child_el, parent=node)
+            inline = _parse_block_el(child_el, parent=node, disabled=disabled)
             if inline is not None:
                 node.values.append(inline)
 
@@ -202,155 +301,3 @@ def _count_nodes(node: Optional[BlockNode]) -> int:
         count += _count_nodes(value_node)
     count += _count_nodes(node.next)
     return count
-
-
-def linearize(program: BlockProgram, include_orphans: bool = False) -> list[BlockNode]:
-    """Return a flat execution-order list of blocks in the program.
-
-    Iterates event handler stacks in document order.  Within each stack,
-    performs a pre-order traversal: emit the block, recurse into children
-    (body stacks), then continue to next sibling.  Value/reporter inputs
-    are NOT included (they are parameters, not executable statements).
-
-    Args:
-        program:         Parsed BlockProgram.
-        include_orphans: If True, also include orphan stacks at the end.
-
-    Returns:
-        List of BlockNode in approximate execution order.
-    """
-    result: list[BlockNode] = []
-    stacks = program.event_handler_stacks
-    if include_orphans:
-        stacks = program.top_level_stacks
-
-    for root in stacks:
-        _linearize_stack(root, result)
-    return result
-
-
-def _linearize_stack(node: Optional[BlockNode], out: list[BlockNode]) -> None:
-    """Recursive pre-order linearization helper."""
-    if node is None:
-        return
-    out.append(node)
-    for child in node.children:
-        _linearize_stack(child, out)
-    _linearize_stack(node.next, out)
-
-
-def block_program_slice(
-    program: BlockProgram,
-    block_ids: list[str],
-) -> BlockProgram:
-    """Build a BlockProgram containing only the blocks in block_ids.
-
-    The returned BlockProgram preserves the original nesting structure, restricted
-    to the selected blocks: a selected loop keeps the selected blocks of its body
-    as ``children``, and siblings at each level are chained via ``next``.  Blocks
-    that were not selected are skipped, and any selected descendants of a skipped
-    block are spliced into the nearest surviving level so nothing is lost.
-
-    Every selected block therefore appears EXACTLY ONCE in linearize(), while the
-    structural features that walk ``children`` — has_nested_loops,
-    sensor_inside_loop, has_turn_in_loop, nesting_depth, and the drive/turn symbol
-    sequence — continue to see real nesting.
-
-    An earlier implementation flattened the segment into a chain of ``next``
-    pointers built from ``copy.copy`` nodes.  Because those shallow copies kept
-    their original ``children``, linearize() (pre-order: emit, recurse children,
-    then next) walked loop and conditional bodies twice — once via children and
-    again via the flat chain — and pulled in body blocks the caller had
-    deliberately excluded.  That inflated every code feature on ~20% of segments,
-    by up to 5x.
-
-    Args:
-        program:   The original full BlockProgram.
-        block_ids: IDs to include.  Execution order is taken from the original
-                   tree, not from the order of this list.
-
-    Returns:
-        A new BlockProgram containing only the selected blocks.
-    """
-    selected = set(block_ids)
-    if not selected:
-        return BlockProgram(
-            program_id=program.program_id,
-            variables=program.variables,
-        )
-
-    def _rebuild(node: Optional[BlockNode]) -> Optional[BlockNode]:
-        """Copy one sibling chain, keeping only selected blocks."""
-        head: Optional[BlockNode] = None
-        tail: Optional[BlockNode] = None
-
-        def _append(first: BlockNode) -> None:
-            nonlocal head, tail
-            if tail is None:
-                head = first
-            else:
-                tail.next = first
-            last = first
-            while last.next is not None:
-                last = last.next
-            tail = last
-
-        current = node
-        while current is not None:
-            original_next = current.next
-            if current.block_id in selected:
-                kept = copy.copy(current)
-                kept.parent = None
-                kept.next = None
-                kept.children = [
-                    branch
-                    for branch in (_rebuild(child) for child in current.children)
-                    if branch is not None
-                ]
-                _append(kept)
-            else:
-                # Not selected: preserve any selected descendants by splicing
-                # them into this level rather than dropping them.
-                for child in current.children:
-                    branch = _rebuild(child)
-                    if branch is not None:
-                        _append(branch)
-            current = original_next
-
-        return head
-
-    roots = [
-        root
-        for root in (_rebuild(stack) for stack in program.event_handler_stacks)
-        if root is not None
-    ]
-    if not roots:
-        return BlockProgram(
-            program_id=program.program_id,
-            variables=program.variables,
-        )
-
-    total = sum(1 for _ in _iter_slice_blocks(roots))
-
-    return BlockProgram(
-        program_id=program.program_id,
-        variables=program.variables,
-        top_level_stacks=roots,
-        event_handler_stacks=roots,
-        orphan_stacks=[],
-        total_block_count=total,
-        active_block_count=total,
-        orphan_block_count=0,
-        raw_xml="",
-    )
-
-
-def _iter_slice_blocks(roots: list[BlockNode]):
-    """Yield every node reachable from these stacks, each exactly once."""
-    for root in roots:
-        node = root
-        while node is not None:
-            yield node
-            for child in node.children:
-                yield from _iter_slice_blocks([child])
-            node = node.next

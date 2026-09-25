@@ -3,7 +3,10 @@ log_parser_delta_engine: take a student's VEX log stream and rebuild what their 
 workspace looks like right now, then render it as pseudo-code. Two renderers live here:
 
   generate_compact_prompt          compact, token-cheap, [Active]/[Orphaned] split (LLM)
-  generate_readable_text / _lines  full names, infix operators, inline values (human)
+  generate_readable_text / _lines  full names, infix operators, inline values, live code
+                                   first and orphans after (human)
+
+Both decide what can run with liveness.py (hat stacks and the My Blocks they call).
 
 Each renderer has a _from_content variant that takes a parsed VEX log content dict
 and extracts the workspace XML internally.

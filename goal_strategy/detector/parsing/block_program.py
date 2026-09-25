@@ -6,8 +6,8 @@ These dataclasses form a tree mirroring the Blockly XML structure:
                  pointer to the next sibling in sequence
   BlockField   → a named parameter value on a block
 
-The IR is produced by parse_blocks.py and consumed by code_features.py,
-simulation/simulate_path.py, and segmentation/segment_code.py.
+The IR is produced by parse_blocks.py and consumed by simulation/simulate_path.py
+and the goal_strategy evidence layers (codefacts, testcases, rubric_evidence).
 """
 
 from __future__ import annotations
@@ -22,6 +22,7 @@ from .block_registry import (  # noqa: E402
     SENSOR_BLOCK_TYPES,
     MAGNET_BLOCK_TYPES,
     VARIABLE_BLOCK_TYPES,
+    EVENT_BLOCK_TYPES,
     classify as _registry_classify,
 )
 
@@ -108,13 +109,18 @@ BlockNodeIterator = "BlockNode"
 # Block type classification helpers
 # ------------------------------------------------------------------ #
 
-EVENT_HANDLER_PREFIXES = ("pg_events_",)
+# Hat blocks: the only top-level blocks that start a program. This is exactly
+# the registry's `event` class. It is an explicit list on purpose: a prefix test
+# like "pg_events_" also matches broadcast / broadcast-and-wait, which are
+# ordinary stack blocks, and made a detached broadcast stack run as live code.
+HAT_BLOCK_TYPES: frozenset[str] = EVENT_BLOCK_TYPES
 
-# Block type sets are loaded from src/goal_strategy_detector/data/blocks.csv
-# via block_registry.py.  To add or fix a block, edit the CSV — no code change needed.
-# The names below are re-exported so that existing imports from this module continue
-# to work unchanged.
+# Block type sets are loaded from detector/data/blocks.csv via block_registry.py.
+# To add or fix a block, edit the CSV - no code change needed. The names below
+# are re-exported so that existing imports from this module continue to work
+# unchanged.
 __all__ = [
+    "HAT_BLOCK_TYPES",
     "MOVEMENT_BLOCK_TYPES",
     "DRIVE_BLOCK_TYPES",
     "LOOP_BLOCK_TYPES",
@@ -129,37 +135,65 @@ __all__ = [
 def classify_block(block_type: str) -> str:
     """Return a coarse category string for a block type.
 
-    Returns one of: 'event_handler', 'movement', 'loop', 'conditional',
-    'sensor', 'magnet', 'variable', 'other'.
-
-    Classification is driven by data/blocks.csv via block_registry.  The
-    'event_handler' label is kept distinct from 'event' (hat blocks) for
-    backward compatibility with downstream callers.
+    Returns 'event_handler' for hat blocks (HAT_BLOCK_TYPES), otherwise the
+    registry classification ('movement', 'loop', 'conditional', 'sensor',
+    'magnet', 'variable', ..., or 'other'). The 'event_handler' label is kept
+    distinct from the registry's 'event' for backward compatibility with
+    downstream callers.
     """
-    if any(block_type.startswith(p) for p in EVENT_HANDLER_PREFIXES):
+    if block_type in HAT_BLOCK_TYPES:
         return "event_handler"
-    cls = _registry_classify(block_type)
-    # 'event' in the registry means hat/event-handler blocks — map to
-    # 'event_handler' for backward compatibility if the prefix check missed it.
-    if cls == "event":
-        return "event_handler"
-    return cls
+    return _registry_classify(block_type)
+
+
+PROCEDURE_DEFINITION = "procedures_definition"
+PROCEDURE_CALL = "procedures_call"
+
+
+def procedure_name(node: BlockNode) -> str | None:
+    """The proccode a My Block definition declares or a call invokes, or None.
+
+    A call carries it on its own <mutation>; a definition carries it on the
+    mutation of its procedures_prototype shadow (the definition's statement
+    child)."""
+    if node.block_type == PROCEDURE_CALL:
+        return (node.mutation or {}).get("proccode") or None
+    if node.block_type == PROCEDURE_DEFINITION:
+        for child in node.children:
+            code = (child.mutation or {}).get("proccode")
+            if code:
+                return code
+    return None
 
 
 @dataclass
 class BlockProgram:
     """Top-level container for a parsed Blockly workspace.
 
+    Liveness: a top-level stack is live when VEX can execute it - it is rooted
+    at an (enabled) hat block, or it is a My Block definition that live code
+    calls (directly or through other called definitions). Everything else is an
+    orphan. Disabled blocks are removed at parse time (see parse_blocks), so
+    they never appear in any stack.
+
     Attributes:
         program_id:              Unique identifier (e.g. student_study_id + session).
         variables:               Variable names declared in the <variables> section.
-        top_level_stacks:        All top-level BlockNode roots (event handlers
-                                 and orphans combined, in document order).
-        event_handler_stacks:    Subset of top_level_stacks rooted at an event handler.
-        orphan_stacks:           Subset not rooted at an event handler.
+        top_level_stacks:        All top-level BlockNode roots (event handlers,
+                                 procedure definitions and orphans combined, in
+                                 document order).
+        event_handler_stacks:    Subset of top_level_stacks rooted at a hat block.
+                                 These are the stacks that start threads.
+        procedure_stacks:        My Block definitions that live code calls. Their
+                                 bodies execute inline at each call site; they
+                                 never start a thread of their own.
+        orphan_stacks:           Everything else: detached stacks and uncalled
+                                 definitions.
         total_block_count:       Total blocks across all stacks (set by parser).
-        active_block_count:      Blocks reachable via event handlers.
+        active_block_count:      Blocks in event handler and called procedure stacks.
         orphan_block_count:      Blocks in orphan stacks.
+        disabled_block_count:    Blocks dropped because they (or an ancestor
+                                 that owns them) were disabled.
         raw_xml:                 Original XML string (for debugging).
     """
 
@@ -172,14 +206,24 @@ class BlockProgram:
     active_block_count: int = 0
     orphan_block_count: int = 0
     raw_xml: str = ""
+    procedure_stacks: list[BlockNode] = field(default_factory=list)
+    disabled_block_count: int = 0
+
+    @property
+    def live_stacks(self) -> list[BlockNode]:
+        """Every stack whose blocks can execute: hat stacks, then called
+        procedure definitions. Walk this (not event_handler_stacks) for any
+        question about "the code that runs"."""
+        return self.event_handler_stacks + self.procedure_stacks
 
     def iter_all_blocks(self) -> "BlockNode":
         """Yield every BlockNode in the program via depth-first traversal.
 
-        Only traverses event_handler_stacks (active code).  Use
-        iter_all_blocks_including_orphans() to include disconnected blocks.
+        Only traverses live_stacks (active code, including called procedure
+        bodies).  Use iter_all_blocks_including_orphans() to include
+        disconnected blocks.
         """
-        for root in self.event_handler_stacks:
+        for root in self.live_stacks:
             yield from _dfs(root)
 
     def iter_all_blocks_including_orphans(self) -> "BlockNode":
