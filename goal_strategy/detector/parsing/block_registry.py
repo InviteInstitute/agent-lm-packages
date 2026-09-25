@@ -5,7 +5,7 @@ to each functional category.  To add support for a new block — whether from a
 new VEX VR version, a playground-specific variant, or a newly observed
 alternate name — add a row to:
 
-    src/goal_strategy.detector/data/blocks.csv
+    goal_strategy/detector/data/blocks.csv
 
 No code changes are required.
 
@@ -16,7 +16,7 @@ Classification values used in the CSV:
     sensor      – sensing blocks that return a value or boolean
     variable    – variable assignment / mutation blocks
     magnet      – electromagnet control blocks
-    event       – event-handler hat blocks
+    event       – hat blocks (start a stack); this set IS the parser's HAT_BLOCK_TYPES
     drawing     – pen / fill blocks
     console     – print / cursor blocks
     timer       – timer reset / read blocks

@@ -12,7 +12,7 @@ Each folder has its own README. Install all three with `pip install .` from the 
 
 | Folder | What it does | Deps | Status |
 |---|---|---|---|
-| [`log_parser_delta_engine/`](log_parser_delta_engine/) | Replay a log stream (or one project XML) into the current VEX workspace and render it as pseudo-code (compact + readable). | stdlib | populated |
+| [`log_parser_delta_engine/`](log_parser_delta_engine/) | Rebuild the current VEX workspace from a log stream (or one project XML) and render it as pseudo-code (compact + readable), live code split from orphans. | stdlib | populated |
 | [`learner_models/`](learner_models/) | Per-run edit distances (APTED), the 5 behavioral triggers, and session episodes. | `apted` | populated |
 | [`goal_strategy/`](goal_strategy/) | Goal profiles, simulation, timelines, sensor battery and optional review tools. | `pyyaml`; analysis/UI extras | populated |
 
@@ -43,8 +43,8 @@ so which one is needed is readable off the call.
 
 | Renderer | Audience | What it does |
 |---|---|---|
-| `generate_compact_prompt` (standalone) / `smart_delta_engine.generate_compact_prompt()` (method) | LLM | Token-cheap listing split into `[Active]` (reachable from a hat block) and `[Orphaned]`. Strips noisy `pg_`/`aim_`/`mixed_` prefixes. No name lookup. Value-slot literals (drive distance, turn degrees) folded into parent fields. |
-| `generate_readable_text` / `generate_readable_lines` | Human | Full display names from `vex_blocks.json`, infix operators (`A < B`), tidied enums (`fwd` to `forward`), inline reporter values, `else:` branch labels. No active/orphan split. |
+| `generate_compact_prompt` (standalone) / `smart_delta_engine.generate_compact_prompt()` (method) | LLM | Token-cheap listing split into `[Active]` (a hat stack or a called My Block) and `[Orphaned]`. Strips noisy `pg_`/`aim_`/`mixed_` prefixes. No name lookup. Value-slot literals (drive distance, turn degrees) folded into parent fields. |
+| `generate_readable_text` / `generate_readable_lines` | Human | Full display names from `vex_blocks.json`, infix operators (`A < B`), tidied enums (`fwd` to `forward`), inline reporter values, `else:` branch labels. Live stacks first, orphans after under `not connected (won't run):`. |
 
 Each renderer also has a `_from_content` variant that takes a parsed VEX log content dict
 and extracts the workspace XML internally (e.g. `generate_compact_prompt_from_content`).

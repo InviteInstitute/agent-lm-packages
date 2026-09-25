@@ -35,7 +35,7 @@ flowchart TD
 
 The public API exports `profile`, `GoalProfile`, `GoalEvidence`, and `Indicator`. Timeline functions are in a separate module. The core dependency is PyYAML; pandas and pyarrow serve offline tools.
 
-The parser constructs linked block sequences and nested bodies, preserves named statement/value slots, and prefers connected blocks over shadow defaults. Procedure definitions are classified as orphan stacks, but the simulator separately registers and executes their bodies when called. That special case is not carried into every other consumer.
+The parser constructs linked block sequences and nested bodies, preserves named statement/value slots, and prefers connected blocks over shadow defaults. A top-level stack is live when it starts at a hat (the registry's `event` class, an explicit list) or it is a procedure definition that live code calls; called definitions land in `procedure_stacks`, and `live_stacks` is what every code-channel consumer walks. The simulator registers definition bodies and executes them inline at each call. Disabled blocks are dropped from live stacks at parse time.
 
 The approximately 4,000-line simulator combines an interpreter, a cooperative scheduler, sensor geometry, movement and coverage sampling, tracing, and path analysis helpers. Its cooperative scheduler advances runnable threads to yield points and commits shared drivetrain motion between events. Sensor hats and broadcasts retain documented approximations. The normal world keeps movable objects static and marks stale sensor evidence after disturbance; the scenario battery enables a separate kinematic push model.
 

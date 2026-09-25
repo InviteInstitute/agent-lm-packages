@@ -14,13 +14,33 @@ The rendering rule is one idea, applied recursively:
   * value children get rendered inline into the parent (conditions, sensor reads,
     math), because a reporter drops into a socket, it doesn't sit in the stack
 
+Live code comes first, one stack after another with a blank line between them (separate
+stacks run side by side, not one after the other). Stacks that can never run (not
+under a hat, or an uncalled My Block) follow under ORPHAN_HEADER, indented, so they
+can't be read as the next steps of the program. What counts as live is decided by
+liveness.py, the same rules the compact renderer uses. A disabled block stays where
+it is, marked "(disabled)".
+
 Block names come from vex_blocks.json (VEX's own mapping, with blocks + robots + python
-merged). If a block isn't in there its raw type prints, so a stale mapping never breaks
-the listing, it only makes it uglier until someone refreshes the file.
+merged). If a block isn't in there, a name is derived from its type (platform prefix
+dropped, underscores to spaces), so a stale mapping never breaks the listing, it only
+makes it rougher until someone refreshes the file.
 """
 import json
 import os
 import xml.etree.ElementTree as ET
+
+from .liveness import (
+    PROCEDURE_CALL,
+    PROCEDURE_DEFINITION,
+    child_block,
+    is_disabled,
+    next_block,
+    procedure_label,
+    split_stacks,
+    strip_namespaces,
+    value_input,
+)
 
 _MAP_PATH = os.path.join(os.path.dirname(__file__), "vex_blocks.json")
 
@@ -51,9 +71,20 @@ _INFIX = {
 # is the second branch of an if/else, so the "then" side and "else" side don't blur.
 _STMT_LABEL = {"SUBSTACK2": "else"}
 
+# Heads the section of stacks that can never run.
+ORPHAN_HEADER = "not connected (won't run):"
+
+_PLATFORM_PREFIXES = ("pg_", "iq_", "vr_", "aim_", "mixed_")
+
 
 def _name(t):
-    return _NAMES.get(t, t)
+    if t in _NAMES:
+        return _NAMES[t]
+    for prefix in _PLATFORM_PREFIXES:
+        if t.startswith(prefix):
+            t = t[len(prefix):]
+            break
+    return t.replace("_", " ")
 
 
 def _tidy(v):
@@ -77,15 +108,23 @@ def _value(block, slot_name):
 
 
 def _value_str(value_elem):
-    """Render a <value> element. Either it's a shadow holding a literal, or it's a
-    nested reporter block to recurse into."""
-    for c in value_elem:
-        if c.tag == "block":
-            return _expr(c)                       # nested reporter, recurse
-        if c.tag == "shadow":
-            f = c.find("field")
-            return (f.text or "").strip() if f is not None else ""
-    return ""
+    """Render a <value> element: the connected reporter block if there is one (it
+    covers the slot's shadow default, which Blockly still writes out first), else the
+    shadow's literal."""
+    inp = value_input(value_elem)
+    if inp is None:
+        return ""
+    if inp.tag == "block":
+        return _expr(inp)                          # nested reporter, recurse
+    f = inp.find("field")
+    return (f.text or "").strip() if f is not None else ""
+
+
+def _is_reporter(block):
+    """Operators only ever plug into a socket. At the top level they are loose
+    reporters and read best as the expression they compute."""
+    t = block.attrib.get("type", "")
+    return t in _INFIX or t.startswith("pg_operator_")
 
 
 def _expr(block):
@@ -95,6 +134,8 @@ def _expr(block):
         field, slots = _INFIX[t]
         op = _tidy(_field(block, field))
         return "(" + f" {op} ".join(_value(block, s) for s in slots) + ")"
+    if t.startswith("argument_reporter"):          # a My Block parameter
+        return _field(block, "VALUE")
     if t == "pg_operator_not":                     # not X
         return f"(not {_value(block, 'OPERAND')})"
     if t == "pg_operator_range":                   # A < x < B
@@ -115,7 +156,13 @@ def _expr(block):
 def _line(block):
     """The one-line label for a stackable block: name, then fields, then value
     literals. Mutator fields are hidden, since those are just VEX plumbing
-    (things like `anddontwait_mutator`) and mean nothing to a reader."""
+    (things like `anddontwait_mutator`) and mean nothing to a reader. My Blocks read
+    as `define <name>` and `call <name>`, arguments filled in."""
+    t = block.attrib.get("type", "")
+    if t == PROCEDURE_DEFINITION:
+        return "define " + procedure_label(block)
+    if t == PROCEDURE_CALL:
+        return "call " + procedure_label(block, lambda slot: _value(block, slot))
     fields = [_tidy(_field(block, c.attrib["name"]))
               for c in block
               if c.tag == "field" and c.attrib.get("name")
@@ -133,43 +180,60 @@ def _line(block):
     return f"{_name(block.attrib.get('type', ''))}" + (f" {tail}" if tail else "")
 
 
-def _strip_ns(elem):
-    if "}" in elem.tag:
-        elem.tag = elem.tag.split("}", 1)[1]
-    for child in elem:
-        _strip_ns(child)
+def _walk(block, depth, out):
+    """Append one line per stackable block of the chain starting at `block`: the block,
+    then its statement bodies one level deeper, then the next block at the same depth."""
+    while block is not None:
+        mark = " (disabled)" if is_disabled(block) else ""
+        out.append("  " * depth + _line(block) + mark)
+        for child in block:
+            if child.tag == "statement":
+                body = child_block(child)
+                if body is None:
+                    continue
+                label = _STMT_LABEL.get(child.attrib.get("name"))
+                if label:
+                    out.append("  " * depth + label + ":")
+                _walk(body, depth + 1, out)
+        block = next_block(block)
+
+
+def _stack(top, depth, out):
+    if _is_reporter(top):
+        mark = " (disabled)" if is_disabled(top) else ""
+        out.append("  " * depth + _expr(top) + mark)
+    else:
+        _walk(top, depth, out)
 
 
 def generate_readable_lines(xml_string):
     """Parse a workspace XML string into a list of readable lines, one per stackable
-    block, indented to show the loop and if nesting. Empty or broken input returns
-    [] instead of raising, so a caller can always treat this as best-effort."""
+    block, indented to show the loop and if nesting. Live stacks come first, separated
+    by a blank line; stacks that can never run follow under ORPHAN_HEADER, indented one
+    level. Empty or broken input returns [] instead of raising, so a caller can always
+    treat this as best-effort."""
     if not xml_string:
         return []
     try:
         root = ET.fromstring(xml_string)
     except ET.ParseError:
         return []
-    _strip_ns(root)
+    strip_namespaces(root)
+    active, orphaned = split_stacks(root)
 
     out = []
-
-    def walk(block, depth):
-        out.append("  " * depth + _line(block))
-        for child in block:
-            if child.tag == "statement":
-                label = _STMT_LABEL.get(child.attrib.get("name"))
-                if label:
-                    out.append("  " * depth + label + ":")
-                for nb in child.findall("block"):
-                    walk(nb, depth + 1)
-            elif child.tag == "next":
-                for nb in child.findall("block"):
-                    walk(nb, depth)          # next just chains on, so keep the depth
-
-    for block in root:
-        if block.tag == "block":
-            walk(block, 0)
+    for i, top in enumerate(active):
+        if i:
+            out.append("")
+        _stack(top, 0, out)
+    if orphaned:
+        if out:
+            out.append("")
+        out.append(ORPHAN_HEADER)
+        for i, top in enumerate(orphaned):
+            if i:
+                out.append("")
+            _stack(top, 1, out)
     return out
 
 
@@ -180,10 +244,12 @@ def generate_readable_text(xml_string):
 
 
 if __name__ == "__main__":
-    # Quick self-check so the recursion and infix rendering can't quietly break.
-    # Covers a literal number, an if/else, and a deeply nested condition.
+    # Quick self-check so the recursion, infix rendering and live/orphan split can't
+    # quietly break. Covers a literal number, an if/else, a deeply nested condition,
+    # a reporter covering a shadow default, a called My Block, a disabled block and a
+    # loose stack.
     demo = (
-        '<xml>'
+        '<xml xmlns="https://developers.google.com/blockly/xml">'
         '<block type="pg_events_when_started"><next>'
         '  <block type="pg_drivetrain_drive_for">'
         '    <field name="DIRECTION">fwd</field><field name="UNITS">mm</field>'
@@ -194,14 +260,22 @@ if __name__ == "__main__":
         '      <value name="CONDITION"><block type="pg_operator_not"><value name="OPERAND">'
         '        <block type="pg_operator_and_or"><field name="CHECK">and</field>'
         '          <value name="OPERAND1"><block type="pg_operator_comparison"><field name="COMPARISON">&lt;</field>'
-        '            <value name="NUM1"><block type="pg_sensing_distance_distance"><field name="DISTANCE">frontdistance</field></block></value>'
+        '            <value name="NUM1"><shadow type="math_number"><field name="NUM">0</field></shadow>'
+        '              <block type="pg_sensing_distance_distance"><field name="DISTANCE">frontdistance</field></block></value>'
         '            <value name="NUM2"><shadow type="math_number"><field name="NUM">200</field></shadow></value></block></value>'
         '          <value name="OPERAND2"><block type="pg_sensing_optical_near_object"><field name="OPTICAL">fronteye</field></block></value>'
         '        </block></value></block></value>'
         '      <statement name="SUBSTACK"><block type="pg_drivetrain_drive"><field name="DIRECTION">fwd</field></block></statement>'
         '      <statement name="SUBSTACK2"><block type="pg_drivetrain_stop_driving"/></statement>'
+        '    <next><block type="procedures_call"><mutation xmlns="http://www.w3.org/1999/xhtml" proccode="wiggle"/>'
+        '      <next><block type="pg_drivetrain_stop_driving" disabled="true"/></next></block></next>'
         '    </block></next></block>'
-        '</next></block></xml>'
+        '</next></block>'
+        '<block type="procedures_definition"><statement name="custom_block">'
+        '  <shadow type="procedures_prototype"><mutation xmlns="http://www.w3.org/1999/xhtml" proccode="wiggle"/></shadow>'
+        '</statement><next><block type="pg_drivetrain_turn"><field name="TURNDIRECTION">right</field></block></next></block>'
+        '<block type="pg_events_broadcast"><field name="BROADCAST_OPTION">go</field></block>'
+        '</xml>'
     )
     lines = generate_readable_lines(demo)
     print("\n".join(lines))
@@ -209,4 +283,9 @@ if __name__ == "__main__":
     assert any("else:" == ln.strip() for ln in lines), "if/else branch not labeled"
     assert any("not (" in ln and "and" in ln and "< 200" in ln for ln in lines), \
         "nested condition not rendered"
+    assert not any("(0 <" in ln for ln in lines), "shadow default shown over a reporter"
+    assert "call wiggle" in lines and "define wiggle" in lines, "My Block not named"
+    assert any(ln.endswith("(disabled)") for ln in lines), "disabled block not marked"
+    orphans = lines[lines.index(ORPHAN_HEADER) + 1:]
+    assert orphans == ["  broadcast event go"], "loose broadcast not orphaned"
     print("\nself-check OK")
