@@ -201,16 +201,47 @@ def _scan_min_distance(goal, kind, spec, cfg, full, ectx, scored_last):
     return events
 
 
+def _prefix_coverage(full, context, region):
+    """Coverage of `region` for every path prefix, in one pass: entry k (for
+    1 <= k < len(path)) equals
+    slice_sim_result(full, 0, k, context).region_coverage_fractions.get(region, 0.0).
+    Cells only accumulate, so each prefix adds its one move to the previous
+    prefix's cell set instead of re-slicing the path from the start (which made
+    the binary search below O(P log P) moves). None when there is no context
+    (the legacy proxy path, which keeps slicing)."""
+    if context is None:
+        return None
+    from .detector.simulation.simulate_path import _coverage_cells_for_move
+    bounds = context.regions.get(region)
+    out = [0.0]
+    cells: set = set()
+    total = bounds.total_grid_cells if bounds is not None else 0
+    prev_x, prev_y = context.spawn_x, context.spawn_y
+    for ps in full.path:
+        if bounds is not None:
+            got = _coverage_cells_for_move(prev_x, prev_y, ps.x, ps.y, ps.heading,
+                                           context.robot_width_mm, bounds)
+            if got:
+                cells.update(got)
+        prev_x, prev_y = ps.x, ps.y
+        out.append(min(1.0, len(cells) / total) if cells and total > 0 else 0.0)
+    return out
+
+
 def _scan_region_coverage(goal, kind, spec, cfg, full, ectx, scored_last):
     """Cells only accumulate — binary-search the first prefix crossing each edge."""
     region = spec.binding["region"]
     final_cov = full.region_coverage_fractions.get(region, 0.0)
+    prefix = _prefix_coverage(full, cfg.context, region)
     cache: dict[int, float] = {len(full.path): final_cov}
 
     def cov_at(k: int) -> float:   # coverage of path prefix [0, k)
-        if k not in cache:
-            sliced = slice_sim_result(full, 0, k, context=cfg.context)
-            cache[k] = sliced.region_coverage_fractions.get(region, 0.0)
+        if k in cache:
+            return cache[k]
+        if prefix is not None and 0 < k < len(prefix):
+            return prefix[k]
+        sliced = slice_sim_result(full, 0, k, context=cfg.context)
+        cache[k] = sliced.region_coverage_fractions.get(region, 0.0)
         return cache[k]
 
     events = []

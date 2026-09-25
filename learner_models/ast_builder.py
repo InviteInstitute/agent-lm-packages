@@ -11,10 +11,11 @@ import xml.etree.ElementTree as ET
 
 
 def _strip_namespace(elem):
-    if "}" in elem.tag:
-        elem.tag = elem.tag.split("}", 1)[1]
-    for child in elem:
-        _strip_namespace(child)
+    # iter() walks the whole tree without recursion (Blockly nests every next
+    # block inside the previous one, so a long program is a very deep tree).
+    for el in elem.iter():
+        if "}" in el.tag:
+            el.tag = el.tag.split("}", 1)[1]
 
 
 def _parse_xml_string(xml_string):
@@ -73,33 +74,38 @@ def xml_to_block_ast(xml_string, keep_shadow=False):
         nodes[bid] = {"type": info["type"], "fields": info["fields"]}
         return bid
 
-    def traverse(block_elem, parent_id=None, edge_type=None, slot=None, order=0, is_root=False):
-        if block_elem.tag == "shadow" and not keep_shadow:
-            return None
-
-        current_id = register(block_elem)
-        if is_root:
-            roots.append(current_id)
-        if parent_id is not None:
-            edges.append({
-                "source": parent_id, "target": current_id,
-                "edge_type": edge_type, "slot": slot, "order": order,
-            })
-
+    def children_of(block_elem, current_id):
+        """(element, parent_id, edge_type, slot, order) for each child block, in
+        document order."""
+        out = []
         for child in block_elem:
             if child.tag in ("next", "statement", "value"):
                 slot_name = child.attrib.get("name") if child.tag != "next" else None
                 nested = _find_child_blocks(child, allow_shadow=keep_shadow)
                 for i, nb in enumerate(nested):
-                    traverse(nb, parent_id=current_id, edge_type=child.tag,
-                             slot=slot_name, order=i, is_root=False)
-        return current_id
+                    out.append((nb, current_id, child.tag, slot_name, i))
+        return out
 
-    for child in root:
-        if child.tag == "block":
-            traverse(child, is_root=True)
-        elif child.tag == "shadow" and keep_shadow:
-            traverse(child, is_root=True)
+    # Pre-order walk with an explicit stack. The order (and so the generated ids
+    # and edge order) is exactly what the recursive version produced, but a long
+    # program no longer costs a stack frame per block.
+    pending = []
+    for child in reversed(list(root)):
+        if child.tag == "block" or (child.tag == "shadow" and keep_shadow):
+            pending.append((child, None, None, None, 0))
+    while pending:
+        block_elem, parent_id, edge_type, slot, order = pending.pop()
+        if block_elem.tag == "shadow" and not keep_shadow:
+            continue
+        current_id = register(block_elem)
+        if parent_id is None:
+            roots.append(current_id)
+        else:
+            edges.append({
+                "source": parent_id, "target": current_id,
+                "edge_type": edge_type, "slot": slot, "order": order,
+            })
+        pending.extend(reversed(children_of(block_elem, current_id)))
 
     return {"nodes": nodes, "edges": edges, "roots": roots}
 

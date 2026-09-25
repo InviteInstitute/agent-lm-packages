@@ -104,13 +104,17 @@ def _is_sensing(bt: str) -> bool:
 
 
 def _walk(node):
-    while node is not None:
-        yield node
-        for child in node.children:
-            yield from _walk(child)
-        for value in node.values:
-            yield from _walk(value)
-        node = node.next
+    """Pre-order: a block, its statement bodies, its value inputs, then the next
+    block. Iterative, so neither a long sequence nor deep nesting costs stack."""
+    pending = [node]
+    while pending:
+        cur = pending.pop()
+        if cur is None:
+            continue
+        yield cur
+        pending.append(cur.next)
+        pending.extend(reversed(cur.values))
+        pending.extend(reversed(cur.children))
 
 
 def _subtree_has_sensing(node) -> bool:
@@ -145,43 +149,88 @@ def _call_sites(program, blocks) -> dict:
     return sites
 
 
-def _ancestor_paths(node, sites=None, _seen=frozenset()):
-    """Every ancestor chain of `node`, nearest first. Inside a called My Block
-    body the chain continues from each call site, so a body block called from
-    inside a loop has that loop as an ancestor. Recursive calls are cut."""
-    chain = []
-    top = node
-    p = node.parent
-    while p is not None:
-        chain.append(p)
-        top = p
-        p = p.parent
-    extended = False
-    for call in (sites or {}).get(id(top), ()):
-        if id(call) in _seen:
-            continue
-        for rest in _ancestor_paths(call, sites, _seen | {id(call)}):
-            extended = True
-            yield chain + [call] + rest
-    if not extended:
-        yield chain
+class _Ancestry:
+    """Ancestor queries that look through My Block call sites: inside a called
+    My Block body, a block's ancestors continue from each call that runs the
+    body, so a body block called from inside a loop has that loop as an
+    ancestor. Recursive calls are cut (a call already being followed is not
+    followed again).
 
+    Each call site's answer is computed once and reused by every block under
+    it, so a query costs the walk up the block's own body plus cached lookups.
+    Enumerating every ancestor path instead costs the product of the call-site
+    counts at each My Block level, which is exponential in how deeply My Blocks
+    call each other."""
 
-def _loop_ancestor(node, sites=None):
-    for path in _ancestor_paths(node, sites):
-        for p in path:
-            if p.block_type in _LOOP_TYPES:
+    _PENDING = object()
+
+    def __init__(self, sites):
+        self._sites = sites or {}
+        self._first = {}   # (predicate, id(call)) -> nearest match via that call
+        self._depth = {}   # (predicate, id(call)) -> max matches via that call
+
+    def _chain(self, node):
+        """The node's ancestors inside its own body (nearest first) and the
+        topmost one, whose call sites continue the chain."""
+        chain, top, p = [], node, node.parent
+        while p is not None:
+            chain.append(p)
+            top = p
+            p = p.parent
+        return chain, top
+
+    def first(self, node, pred):
+        """The nearest ancestor matching pred: first up the node's own body,
+        then through each call site in order."""
+        chain, top = self._chain(node)
+        for p in chain:
+            if pred(p):
                 return p
-    return None
+        for call in self._sites.get(id(top), ()):
+            key = (pred, id(call))
+            found = self._first.get(key)
+            if found is self._PENDING:
+                continue
+            if key not in self._first:
+                self._first[key] = self._PENDING
+                found = call if pred(call) else self.first(call, pred)
+                self._first[key] = found
+            if found is not None:
+                return found
+        return None
+
+    def depth(self, node, pred):
+        """The most ancestors matching pred along any chain of call sites."""
+        chain, top = self._chain(node)
+        best = 0
+        for call in self._sites.get(id(top), ()):
+            key = (pred, id(call))
+            got = self._depth.get(key)
+            if got is self._PENDING:
+                continue
+            if got is None:
+                self._depth[key] = self._PENDING
+                got = int(pred(call)) + self.depth(call, pred)
+                self._depth[key] = got
+            best = max(best, got)
+        return sum(1 for p in chain if pred(p)) + best
 
 
-def _body_ancestor(node, sites=None):
+def _is_loop(node) -> bool:
+    return node.block_type in _LOOP_TYPES
+
+
+def _is_body(node) -> bool:
+    return node.block_type in _LOOP_TYPES or node.block_type in _CONDITIONAL_TYPES
+
+
+def _loop_ancestor(node, ancestry):
+    return ancestry.first(node, _is_loop)
+
+
+def _body_ancestor(node, ancestry):
     """Nearest loop OR conditional ancestor (for procedure-call coordination)."""
-    for path in _ancestor_paths(node, sites):
-        for p in path:
-            if p.block_type in _LOOP_TYPES or p.block_type in _CONDITIONAL_TYPES:
-                return p
-    return None
+    return ancestry.first(node, _is_body)
 
 
 def calibration_audit(program, geometry_mm: "list[float]",
@@ -449,14 +498,14 @@ def code_evidence(program, sim) -> CodeEvidence:
     blocks = [b for root in executable for b in _walk(root)
               if b.block_id not in _dead]
     by_id = {b.block_id: b for b in blocks}
-    sites = _call_sites(program, blocks)
+    ancestry = _Ancestry(_call_sites(program, blocks))
 
     sensing_blocks = [b for b in blocks if _is_sensing(b.block_type)]
     sensing_in_executable = bool(sensing_blocks)
     # hats are recurrent by semantics (edge-triggered re-arming); reporters
     # are recurrent when a loop encloses them
     sensing_in_recurrent = any(
-        b.block_type in _SENSING_HATS or _loop_ancestor(b, sites) is not None
+        b.block_type in _SENSING_HATS or _loop_ancestor(b, ancestry) is not None
         for b in sensing_blocks)
 
     has_loops = any(b.block_type in _LOOP_TYPES for b in blocks)
@@ -495,9 +544,15 @@ def code_evidence(program, sim) -> CodeEvidence:
 
     # ---- wait_until releases (path, v1 approximation) ----
     path_ids = [p.block_id for p in (sim.path or [])]
-    first_at = {}
+    # Where each block sits on the path, built once: the executed path can run
+    # to the simulator's 50k-block budget, so per-block rescans of it add up.
+    positions: dict[str, list[int]] = {}
     for i, bid in enumerate(path_ids):
-        first_at.setdefault(bid, i)
+        positions.setdefault(bid, []).append(i)
+    first_at = {bid: at[0] for bid, at in positions.items()}
+
+    def _count(bid):
+        return len(positions.get(bid, ()))
     wait_releases: dict[str, int] = {}
     for b in blocks:
         if b.block_type != "pg_control_wait_until":
@@ -506,10 +561,10 @@ def code_evidence(program, sim) -> CodeEvidence:
             continue
         nxt = b.next
         if b.block_id in first_at and nxt is not None \
-                and any(i > first_at[b.block_id] for i, bid
-                        in enumerate(path_ids) if bid == nxt.block_id):
+                and nxt.block_id in positions \
+                and positions[nxt.block_id][-1] > first_at[b.block_id]:
             wait_releases[b.block_id] = min(
-                path_ids.count(b.block_id), path_ids.count(nxt.block_id))
+                _count(b.block_id), _count(nxt.block_id))
 
     # ---- construct_coordination_relations ----
     loops_run = set((sim.loops_exercised or {}).keys())
@@ -522,7 +577,7 @@ def code_evidence(program, sim) -> CodeEvidence:
         node = by_id.get(blk)
         if node is None or not _subtree_has_sensing(node):
             continue
-        loop = _loop_ancestor(node, sites)
+        loop = _loop_ancestor(node, ancestry)
         if loop is not None and loop.block_id in loops_run:
             relations.append(f"live_conditional_in_loop:{blk}")
     for b in blocks:
@@ -533,12 +588,12 @@ def code_evidence(program, sim) -> CodeEvidence:
                 relations.append(f"sensing_terminated_loop:{b.block_id}")
     for blk, n in wait_releases.items():
         node = by_id[blk]
-        loop = _loop_ancestor(node, sites)
+        loop = _loop_ancestor(node, ancestry)
         if n >= 1 and loop is not None and loop.block_id in loops_run:
             relations.append(f"sensing_wait_in_loop:{blk}")
     for b in blocks:
         if b.block_type == "procedures_call":
-            anc = _body_ancestor(b, sites)
+            anc = _body_ancestor(b, ancestry)
             if anc is not None and (anc.block_id in loops_run
                                     or anc.block_id in arm_seqs):
                 relations.append(f"procedure_in_construct:{b.block_id}")
@@ -572,11 +627,9 @@ def code_evidence(program, sim) -> CodeEvidence:
         if b.block_type != "pg_control_wait_until" or not _subtree_has_sensing(b):
             continue
         if b.next is not None and b.next.block_type in _CONTINUOUS_MOTION:
-            state_events += path_ids.count(b.block_id)
+            state_events += _count(b.block_id)
             continue
-        for i, bid in enumerate(path_ids):
-            if bid != b.block_id:
-                continue
+        for i in positions.get(b.block_id, ()):
             look = path_ids[i + 1:i + 4]
             if any(l in motion_ids for l in look):
                 state_events += 1
@@ -587,7 +640,7 @@ def code_evidence(program, sim) -> CodeEvidence:
                 and b.block_id in loops_run and _subtree_has_sensing(b):
             nxt = b.next
             if nxt is not None and nxt.block_id in first_at:
-                state_events += path_ids.count(nxt.block_id)
+                state_events += _count(nxt.block_id)
     # (c) arm changes on sensing conditionals whose arms drive
     for blk, alts in alternations.items():
         if alts < 1:
@@ -621,12 +674,8 @@ def code_evidence(program, sim) -> CodeEvidence:
             ex_forever += 1
     exercised_conditionals = len(arm_seqs)
 
-    def _depth(node):
-        return max(sum(1 for p in [node] + path
-                       if p.block_type in _LOOP_TYPES
-                       or p.block_type in _CONDITIONAL_TYPES)
-                   for path in _ancestor_paths(node, sites))
-    max_depth = max((_depth(b) for b in blocks), default=0)
+    max_depth = max((int(_is_body(b)) + ancestry.depth(b, _is_body) for b in blocks),
+                    default=0)
 
     state_termination = bool(wait_releases) or any(
         r.startswith("sensing_terminated_loop") for r in relations)
@@ -646,13 +695,17 @@ def code_evidence(program, sim) -> CodeEvidence:
     for b in blocks:
         if not b.block_type.startswith(_MOTION_PREFIX):
             continue
-        anc = _body_ancestor(b, sites)
-        while anc is not None:
+        anc = _body_ancestor(b, ancestry)
+        # Walking up through call sites of recursive My Blocks comes back
+        # around to ancestors already checked; stop there instead of looping.
+        checked: set = set()
+        while anc is not None and id(anc) not in checked:
+            checked.add(id(anc))
             if anc.block_type in _CONDITIONAL_TYPES \
                     and _subtree_has_sensing(anc) \
                     and anc.block_id in arm_seqs:
                 state_gated_motion += 1
-                if b.block_id in path_ids:
+                if b.block_id in positions:
                     state_gated_executed += 1
                 for s in _walk_values_only(anc):
                     if _is_sensing(s.block_type):
@@ -661,7 +714,7 @@ def code_evidence(program, sim) -> CodeEvidence:
                              or s.get_field("BUMPER") or "")
                         gated_sensors.add(f"{s.block_type}[{f}]")
                 break
-            anc = _body_ancestor(anc, sites)
+            anc = _body_ancestor(anc, ancestry)
     computed_params = 0
     for b in blocks:
         if b.block_type in _MOTION_PARAM_BLOCKS:

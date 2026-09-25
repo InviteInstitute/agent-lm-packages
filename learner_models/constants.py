@@ -22,6 +22,12 @@ RE_ALERT_SECONDS = 600           # re-alert a still-idle student after this many
                                   # Without it, inactive would fire once per session and a
                                   # student who never comes back would only get flagged once.
 EXPLORER_EDIT_DISTANCE = 13      # a single run with edit_distance >= this -> explorer
+# Largest program (non-shadow blocks, either side) that gets a tree-edit distance.
+# APTED is roughly cubic, so a pathological paste of thousands of blocks would stall
+# the worker for minutes to hours; past this size the pair is treated as not
+# comparable (distance None, like a playground switch). Real runs top out near 180
+# blocks (vex prod, 2026-09-25), so this sits at over 3x the largest seen.
+MAX_DIFF_BLOCKS = 600
 ITERATIVE_EDIT_MIN = 0           # runs with edit_distance > this count toward iterative (so any real edit, >= 1, counts)
 ITERATIVE_DEFAULT_THRESHOLD = 6  # count of such runs that fires iterative
 # Per-playground Step-by-Step thresholds. Unlisted playgrounds use the default.

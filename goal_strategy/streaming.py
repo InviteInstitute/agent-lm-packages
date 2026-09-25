@@ -31,6 +31,9 @@ class GoalProfileStream:
     other event returns ``None`` (recording a stream-level diagnostic for
     ``playgroundData`` and non-dict events, mirroring the batch adapter).
     ``associate_outcome`` re-profiles an earlier run once its outcome is known.
+
+    A long-lived host that persists each run can ``release`` it afterwards, so
+    the stream doesn't hold every run's result and inputs for the whole session.
     """
 
     def __init__(self, session_id, *, include_timeline=False, include_battery=False,
@@ -44,7 +47,7 @@ class GoalProfileStream:
         self._include_rollup = include_rollup
         self._previous_playground = None
         self._event_index = 0
-        self.runs = []          # profiled runs; runs[i]['index'] == i
+        self.runs = []          # profiled runs; runs[i]['index'] == i (None once released)
         self.diagnostics = []    # stream-level (non-run) diagnostics, in arrival order
         self._records = []       # per-run inputs, kept so a late outcome can re-profile
 
@@ -81,6 +84,16 @@ class GoalProfileStream:
         self._previous_playground = effective
         return result
 
+    def release(self, index):
+        """Drop an already-profiled run's result and stored inputs to free memory.
+        ``runs[index]`` becomes ``None`` (indices stay stable), and a later
+        ``associate_outcome`` for it records an ``outcome_run_released``
+        diagnostic and returns ``None``."""
+        if type(index) is not int or not 0 <= index < len(self.runs):
+            raise ValueError(f'No run {index!r} to release')
+        self.runs[index] = None
+        self._records[index] = None
+
     def associate_outcome(self, index, outcome):
         """Attach an outcome to an already-profiled run and recompute it. Returns
         the refreshed result, or ``None`` (with an ``outcome_without_run``
@@ -96,6 +109,9 @@ class GoalProfileStream:
             self.diagnostics.append(dict(index=index, reason='outcome_without_run'))
             return None
         rec = self._records[index]
+        if rec is None:
+            self.diagnostics.append(dict(index=index, reason='outcome_run_released'))
+            return None
         result = self._profile_run(rec['content'], rec['effective'], rec['inherited'], outcome,
                                    index, rec['event_index'], rec['ts'],
                                    rec['content_diagnostics'])
