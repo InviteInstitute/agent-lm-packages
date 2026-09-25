@@ -17,10 +17,11 @@ And identity switches (casing / class changes on a tracked handle):
   detect_switches    -> the (kind, from, to) switches one event represents
 
 Public API:
-  compute_run_edit_distances                  (run_sequence)
+  compute_run_edit_distances, RunDistanceStream   (run_sequence)
   detect_run_triggers, detect_run_triggers_by_playground   (triggers)
   is_inactive, detect_inactive_trigger, INACTIVE_RUN_INDEX  (triggers)
   segment_session, segment_episodes, boundary_kind          (episodes)
+  SessionSegmenter (incremental segment_session)            (episodes)
   cached_edit_distance, clear_cache                         (distance)
   xml_to_block_ast, extract_workspace_xml                   (ast_builder)
   detect_switches                             (switches)
@@ -29,12 +30,12 @@ Workspace rendering (compact + readable) lives in log_parser_delta_engine.
 
 Needs the `apted` package (see requirements.txt). Everything else is stdlib.
 """
-from .run_sequence import compute_run_edit_distances
+from .run_sequence import compute_run_edit_distances, RunDistanceStream
 from .triggers import (
     detect_run_triggers, detect_run_triggers_by_playground,
     is_inactive, detect_inactive_trigger, INACTIVE_RUN_INDEX,
 )
-from .episodes import segment_session, segment_episodes
+from .episodes import segment_session, segment_episodes, SessionSegmenter
 from .constants import boundary_kind
 from .distance import cached_edit_distance, clear_cache
 from .ast_builder import xml_to_block_ast, extract_workspace_xml
@@ -42,12 +43,14 @@ from .switches import detect_switches
 
 __all__ = [
     "compute_run_edit_distances",
+    "RunDistanceStream",
     "detect_run_triggers",
     "detect_run_triggers_by_playground",
     "is_inactive",
     "detect_inactive_trigger",
     "INACTIVE_RUN_INDEX",
     "segment_session",
+    "SessionSegmenter",
     "segment_episodes",
     "boundary_kind",
     "cached_edit_distance",

@@ -1358,7 +1358,13 @@ def simulate_path(
     except _StopSignal:
         stopped = True   # stop project halts the robot too — no runoff
     if not stopped:
-        sim.finish_pending_motion()
+        try:
+            sim.finish_pending_motion()
+        except _StopSignal:
+            # The runoff can fire a sensor hat whose stack stops the project or
+            # exhausts a budget (its flag is already set). That ends the run
+            # here, as it would have inside the main loop, instead of escaping.
+            pass
     result = sim.build_result()
     # Stage 0b (additive): blocks.csv simulator_status for every block type the
     # program contains — executed or not — so the evidence layer can see which

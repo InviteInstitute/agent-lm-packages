@@ -33,6 +33,41 @@ episodes, pauses = segment_session(events)                     # CODE/RUN/RESET 
   `content` (`project.workspace`, `playground`).
 - `segment_session` looks at only `event_type` + `ts` (it ignores `content`).
 
+### Live hosts: the incremental forms
+
+A host that sees events one at a time shouldn't rerun the batch calls over the whole
+session on every event. Both have an incremental twin that gives exactly the same
+output for the same events, at a constant cost per event:
+
+```python
+from learner_models import RunDistanceStream, SessionSegmenter
+
+runs, segmenter = RunDistanceStream(), SessionSegmenter()
+for ev in live_events:
+    runs.push(ev)                                # returns the new run dict, or None
+    segmenter.push(ev["event_type"], ev["ts"])
+runs.runs                                        # == compute_run_edit_distances(events)["runs"]
+segmenter.result()                               # == segment_session(events)
+segmenter.forget_before(index)                   # optional: keep only a recent window
+```
+
+`RunDistanceStream` keeps only the previous run's workspace and parses a workspace
+into an AST only when a distance is actually computed, so identical re-runs and cached
+pairs cost a hash.
+
+### Size limits
+
+- Programs are walked without recursion, so a long straight-line program (Blockly nests
+  each next block inside the previous one) never hits Python's recursion limit. APTED
+  itself recurses once per tree level, so the interpreter's limit is raised to fit
+  before it runs.
+- APTED is roughly cubic. A pair where either program has more than
+  `MAX_DIFF_BLOCKS` (600) blocks is not compared: its `edit_distance` is `None`, like
+  the first run after a playground switch. Real runs top out near 180 blocks.
+- Two runs whose trees are identical (for example, only a number changed, and shadow
+  literals aren't in the AST) score 0 without running APTED.
+- The distance cache is an LRU of the most recent 50,000 XML pairs.
+
 ## Output shapes
 
 **`runs`** is a list of dicts, one per `runProject` event:
@@ -126,10 +161,10 @@ resurface periodically.
 
 | module | public | notes |
 |---|---|---|
-| `run_sequence.py` | `compute_run_edit_distances` | runProject to workspace XML to AST to per-run distance |
-| `distance.py` | `cached_edit_distance`, `compute_edit_distance` | APTED tree-edit distance, VEX cost model, XML-pair memo |
+| `run_sequence.py` | `compute_run_edit_distances`, `RunDistanceStream` | runProject to workspace XML to AST to per-run distance (batch and incremental) |
+| `distance.py` | `cached_edit_distance`, `compute_edit_distance` | APTED tree-edit distance, VEX cost model, bounded XML-pair memo |
 | `ast_builder.py` | `xml_to_block_ast`, `extract_workspace_xml` | VEX XML into an AST dict |
 | `triggers.py` | `detect_run_triggers[_by_playground]`, `is_inactive`, `detect_inactive_trigger` | all 5 triggers (4 momentary + the inactive DB seam above) |
-| `episodes.py` | `segment_session`, `segment_episodes`, `boundary_kind` | session into episodes + pauses |
+| `episodes.py` | `segment_session`, `segment_episodes`, `SessionSegmenter`, `boundary_kind` | session into episodes + pauses (batch and incremental) |
 | `switches.py` | `detect_switches` | identity switches (handle re-casing, class-code change) off the live stream |
 | `constants.py` | thresholds + APTED costs | one place for all the tunable numbers |

@@ -233,11 +233,14 @@ class BlockProgram:
 
 
 def _dfs(node: BlockNode):
-    """Depth-first traversal of a BlockNode tree."""
-    yield node
-    for child in node.children:
-        yield from _dfs(child)
-    for value_node in node.values:
-        yield from _dfs(value_node)
-    if node.next is not None:
-        yield from _dfs(node.next)
+    """Depth-first traversal of a BlockNode tree, pre-order: a block, its
+    statement bodies, its value inputs, then the next block. Iterative, so a
+    long sequence costs no stack depth."""
+    pending = [node]
+    while pending:
+        cur = pending.pop()
+        yield cur
+        if cur.next is not None:
+            pending.append(cur.next)
+        pending.extend(reversed(cur.values))
+        pending.extend(reversed(cur.children))

@@ -164,7 +164,9 @@ Every VEX log event (`blockCreated`, `blockMoved`, `blockChanged`, `blockDeleted
 `runProject`, `menuSelect`, ...) carries the whole project, workspace XML included, in
 `content.project`. `process_log` rebuilds the workspace from that snapshot on every event
 that has one, whatever its `eventType`. An empty workspace clears the state. Events
-without a `project`, and anything it can't parse, are ignored (no exceptions).
+without a `project`, and anything it can't parse, are ignored (no exceptions). An event
+whose workspace string is the same as the last one (most `menuSelect`, `runProject` and
+UI events) skips the rebuild.
 
 The event's `blockEventData` delta is not replayed. In real logs it is too thin to
 rebuild from: a move names the new parent but not which slot the block went into,

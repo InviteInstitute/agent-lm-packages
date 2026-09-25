@@ -41,12 +41,16 @@ class smart_delta_engine:
         self.parent_map = {}     # parent_id -> [{child_id, edge_type, slot}, ...]
         self.orphan_status = {}  # block_id -> True if it can never run
         self.roots = []          # top-level block ids, document order
+        self._workspace = None   # the XML the maps were last built from
 
     def process_log(self, log_event):
         """Fold one VEX log event into the tracked workspace. Any event whose content
         carries a `project` rebuilds the workspace from that project's XML (an empty
         workspace clears it). Events without a project, and anything unparseable, are
-        ignored."""
+        ignored.
+
+        Most events (menuSelect, runProject, clicks) carry the same workspace as the
+        one before, so an unchanged XML string skips the rebuild."""
         content = log_event.get('content') if isinstance(log_event, dict) else None
         if isinstance(content, str):
             try:
@@ -63,7 +67,10 @@ class smart_delta_engine:
                 return
         if not isinstance(project, dict):
             return
-        self._bootstrap_from_xml(project.get('workspace') or '')
+        xml_string = project.get('workspace') or ''
+        if xml_string == self._workspace:
+            return
+        self._bootstrap_from_xml(xml_string)
 
     def _bootstrap_from_xml(self, xml_string):
         """Clear state and rebuild the maps from a workspace XML string. Unparseable
@@ -78,6 +85,7 @@ class smart_delta_engine:
         self.parent_map.clear()
         self.orphan_status.clear()
         self.roots = []
+        self._workspace = xml_string
         if not xml_string:
             return
         try:

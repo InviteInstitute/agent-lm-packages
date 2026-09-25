@@ -191,7 +191,8 @@ def _parse_block_el(
     parent: Optional[BlockNode],
     disabled: Optional[list] = None,
 ) -> Optional[BlockNode]:
-    """Recursively parse a <block> or <shadow> element into a BlockNode.
+    """Parse a <block> or <shadow> element and the sequence that follows it
+    into a BlockNode chain.
 
     With `disabled` (a one-element counter), the tree is parsed as it
     executes: a disabled block does not run, and neither does anything inside
@@ -199,24 +200,55 @@ def _parse_block_el(
     (Blockly's code generators skip a disabled block and continue with its
     next). So a disabled block is dropped, its <next> chain is spliced into its
     place, and the dropped blocks are counted. Without it (None), the tree is
-    parsed as authored."""
-    block_type = el.get("type", "")
-    block_id = el.get("id", "")
-    if not block_type:
-        return None
+    parsed as authored.
 
-    if disabled is not None and _is_disabled(el):
-        disabled[0] += _count_dropped(el)
-        for child_el in el:
-            if child_el.tag == _TAG_NEXT:
-                for sub in child_el:
-                    if sub.tag in (_TAG_BLOCK, _TAG_SHADOW):
-                        return _parse_block_el(sub, parent=parent, disabled=disabled)
-        return None
+    The <next> sequence is walked in a loop, not by recursion: Blockly nests
+    each next block inside the previous one, so recursing on it would cost a
+    stack frame per block and a long straight-line program would hit the
+    recursion limit. Recursion is kept for statement bodies and value slots,
+    which only go as deep as the program's real nesting."""
+    head: Optional[BlockNode] = None
+    tail: Optional[BlockNode] = None
+    cur: Optional[ET.Element] = el
+    while cur is not None:
+        if not cur.get("type", ""):
+            break
+        if disabled is not None and _is_disabled(cur):
+            disabled[0] += _count_dropped(cur)
+            cur = _next_el(cur)
+            continue
+        node, cur = _parse_one_block(cur, parent, disabled)
+        if tail is None:
+            head = node
+        else:
+            tail.next = node
+        tail = node
+    return head
 
+
+def _next_el(el: ET.Element) -> Optional[ET.Element]:
+    """The <block> or <shadow> in el's last <next> that holds one, or None."""
+    found = None
+    for child_el in el:
+        if child_el.tag == _TAG_NEXT:
+            for sub in child_el:
+                if sub.tag in (_TAG_BLOCK, _TAG_SHADOW):
+                    found = sub
+                    break
+    return found
+
+
+def _parse_one_block(
+    el: ET.Element,
+    parent: Optional[BlockNode],
+    disabled: Optional[list],
+) -> tuple[BlockNode, Optional[ET.Element]]:
+    """Parse one enabled, typed block: its fields, mutation, statement bodies
+    and value inputs. Returns the node and the element of the block after it
+    in its sequence (not parsed here), or None."""
     node = BlockNode(
-        block_type=block_type,
-        block_id=block_id,
+        block_type=el.get("type", ""),
+        block_id=el.get("id", ""),
         parent=parent,
     )
 
@@ -233,14 +265,6 @@ def _parse_block_el(
             # identity (proccode) lives in a <mutation> element in a foreign
             # xhtml namespace — captured verbatim as an attribute dict.
             node.mutation = dict(child_el.attrib)
-
-        elif tag == _TAG_NEXT:
-            # Next sibling in sequence — exactly one <block> or <shadow>
-            for sub in child_el:
-                if sub.tag in (_TAG_BLOCK, _TAG_SHADOW):
-                    node.next = _parse_block_el(sub, parent=node.parent,
-                                                disabled=disabled)
-                    break
 
         elif tag == _TAG_STATEMENT:
             # Body of a loop or conditional — one root block in the body.
@@ -287,17 +311,19 @@ def _parse_block_el(
             if inline is not None:
                 node.values.append(inline)
 
-    return node
+    return node, _next_el(el)
 
 
 def _count_nodes(node: Optional[BlockNode]) -> int:
     """Count total BlockNodes reachable from node (sequence + tree)."""
-    if node is None:
-        return 0
-    count = 1
-    for child in node.children:
-        count += _count_nodes(child)
-    for value_node in node.values:
-        count += _count_nodes(value_node)
-    count += _count_nodes(node.next)
+    count = 0
+    pending = [node]
+    while pending:
+        cur = pending.pop()
+        if cur is None:
+            continue
+        count += 1
+        pending.extend(cur.children)
+        pending.extend(cur.values)
+        pending.append(cur.next)
     return count

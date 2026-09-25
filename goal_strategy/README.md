@@ -92,6 +92,8 @@ stream.associate_outcome(1, {"playground_data": {"parameters": {"weight_cleared"
 
 `push` assigns the same global run index, playground inheritance, stable `program_id` and diagnostics as the batch call - `goal_profiles_from_events` is a thin driver over one stream, so the two cannot diverge. The guarantee that makes mid-session profiling trustworthy: the runs a stream has emitted after *k* events are identical to `goal_profiles_from_events` over those same *k* events. `associate_outcome` recomputes a prior run (never patches it), so a late outcome yields exactly the run the batch call produces with the outcome supplied up front, and never leaves stale evidence. `GoalProfileStream(..., include_timeline=True, include_battery=True)` streams those channels too. There is no server or thread here; any host loop (a websocket, a queue worker, a notebook) drives it. A runnable walkthrough is in [`examples/realtime.py`](../examples/realtime.py) (`GOAL_REALTIME_DELAY=0.6` paces it to feel live).
 
+A long-lived host that stores each run can call `stream.release(index)` once it has, so the stream doesn't hold every run's result and inputs for the whole session. `runs[index]` becomes `None` (indices stay stable), and a later `associate_outcome` for a released run records an `outcome_run_released` diagnostic instead of re-profiling.
+
 ## Execution and confidence
 
 The profile, timeline and review plots share one nominal execution and scoring scope, including the card's cooperative scheduler, program rejection, boundary truncation and corroborated outcome override. Distinct battery/scatter worlds remain separate simulations.
