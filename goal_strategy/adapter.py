@@ -140,14 +140,12 @@ def _result_cache_key(xml, playground, params, diagnostics, include_timeline,
                  or "execute").lower()
     try:
         params_key = json.dumps(params, sort_keys=True, default=str)
-    except TypeError:
-        # Non-string / heterogeneous param keys can't be sorted by json; coerce
-        # keys to str. Safe for the cache key - unrecognized keys don't affect
-        # the profile, so grouping them together never returns a stale result.
-        params_key = json.dumps({str(k): v for k, v in params.items()},
-                                sort_keys=True, default=str)
+    except (TypeError, ValueError):
+        # Keys json can't sort (mixed types, at any depth) or a circular value.
+        # repr keeps distinct params distinct; at worst a reordered dict misses.
+        params_key = repr(params)
     return (
-        hashlib.sha256((xml or "").encode("utf-8", "surrogatepass")).hexdigest(),
+        hashlib.sha256(xml.encode("utf-8", "surrogatepass")).hexdigest(),
         playground if isinstance(playground, str) else repr(playground),
         params_key,
         bool(include_timeline), bool(include_battery), bool(include_rubric),
@@ -160,6 +158,8 @@ def _result_cache_key(xml, playground, params, diagnostics, include_timeline,
 
 def _result(xml, program_id, playground, params, diagnostics, include_timeline,
             include_battery, include_rubric=False, include_rollup=False):
+    if not isinstance(xml, str):
+        xml = ""  # a missing or non-text workspace profiles as invalid XML
     key = _result_cache_key(xml, playground, params, diagnostics, include_timeline,
                             include_battery, include_rubric, include_rollup)
     with _RESULT_CACHE_LOCK:

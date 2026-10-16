@@ -68,6 +68,8 @@ class smart_delta_engine:
         if not isinstance(project, dict):
             return
         xml_string = project.get('workspace') or ''
+        if not isinstance(xml_string, str):
+            xml_string = ''
         if xml_string == self._workspace:
             return
         self._bootstrap_from_xml(xml_string)
@@ -90,7 +92,7 @@ class smart_delta_engine:
             return
         try:
             root = ET.fromstring(xml_string)
-        except ET.ParseError:
+        except (ET.ParseError, ValueError):  # ValueError: lone surrogates
             return
         strip_namespaces(root)
 
@@ -134,17 +136,22 @@ class smart_delta_engine:
         return top_id
 
     def _register(self, el, orphan):
-        b_id = el.get('id') or f'gen_{len(self.blocks)}'
+        b_id = el.get('id')
+        # A repeated id (malformed XML) gets a fresh one: sharing an entry would
+        # parent a block under itself and the walks below would never end.
+        n = len(self.blocks)
+        while not b_id or b_id in self.blocks:
+            b_id = f'gen_{n}'
+            n += 1
         fields = {c.get('name'): c.text or '' for c in el
                   if c.tag == 'field' and c.get('name')}
         name = procedure_name(el)
         if name:
             fields['PROC'] = name
-        x, y = el.get('x'), el.get('y')
         self.blocks[b_id] = {
             'type': el.get('type', 'unknown'),
-            'x': float(x) if x else None,
-            'y': float(y) if y else None,
+            'x': _coord(el.get('x')),
+            'y': _coord(el.get('y')),
             'fields': fields,
             'is_shadow': el.tag == 'shadow',
             'disabled': is_disabled(el),
@@ -183,7 +190,15 @@ class smart_delta_engine:
         Statement bodies and value-slot reporters indent one level under their block;
         the next block in a sequence stays at the same depth. Each block prints its
         type and fields, disabled blocks are marked [disabled], and common VEX type
-        prefixes are stripped to keep the token count down."""
+        prefixes are stripped to keep the token count down. A workspace nested
+        past the interpreter's stack (hostile input, never a real program) renders
+        as `[Unrenderable]`."""
+        try:
+            return self._render_compact()
+        except RecursionError:
+            return "[Unrenderable] blocks nested too deeply"
+
+    def _render_compact(self):
         active = [r for r in self.roots if not self.orphan_status.get(r, True)]
         orphaned = [r for r in self.roots if self.orphan_status.get(r, True)]
 
@@ -223,6 +238,14 @@ class smart_delta_engine:
                 lines.append(" " * depth + label + ":")
             self._render_chain(entry['child_id'], depth + 1, lines)
         return following
+
+
+def _coord(raw):
+    """A block's x/y attribute as a float, or None when absent or not a number."""
+    try:
+        return float(raw) if raw else None
+    except ValueError:
+        return None
 
 
 def _clean_type(raw):

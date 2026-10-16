@@ -63,14 +63,19 @@ def xml_to_block_ast(xml_string, keep_shadow=False):
 
     try:
         root = _parse_xml_string(xml_string)
-    except ET.ParseError:
+    except (ET.ParseError, ValueError):  # ValueError: lone surrogates
         return {"nodes": {}, "edges": [], "roots": []}
     nodes, edges, roots = {}, [], []
 
     def register(block_elem):
         info = _get_block_node_info(block_elem)
-        bid = info["id"] or f"generated_{len(nodes)}"
-        info["id"] = bid
+        bid = info["id"]
+        # A repeated id (malformed or hand-edited XML) gets a fresh one: two
+        # blocks sharing a node would wire a block under itself, a cycle.
+        n = len(nodes)
+        while not bid or bid in nodes:
+            bid = f"generated_{n}"
+            n += 1
         nodes[bid] = {"type": info["type"], "fields": info["fields"]}
         return bid
 
@@ -122,4 +127,5 @@ def extract_workspace_xml(log_content):
             return ""
     if not isinstance(project, dict):
         return ""
-    return project.get("workspace", "") or ""
+    workspace = project.get("workspace")
+    return workspace if isinstance(workspace, str) else ""

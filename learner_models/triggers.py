@@ -154,9 +154,13 @@ def detect_inactive_trigger(last_event_ts, now=None, last_inactive_fire=None):
         run_index = INACTIVE_RUN_INDEX  # first fire
     else:
         last_run_index, last_fired_at = last_inactive_fire
-        if (now - last_fired_at).total_seconds() < RE_ALERT_SECONDS:
+        # The student acted after that fire, so this is a new idle streak and is
+        # due now, not RE_ALERT_SECONDS after the old one (a host polling slower
+        # than the student came back never saw them active to close it).
+        new_streak = last_event_ts > last_fired_at
+        if not new_streak and (now - last_fired_at).total_seconds() < RE_ALERT_SECONDS:
             return None  # already fired recently, not time to re-alert yet
-        run_index = last_run_index - 1  # step the index down for this re-alert
+        run_index = last_run_index - 1  # step the index down, still unique
 
     idle_minutes = int((now - last_event_ts).total_seconds() // 60)
     return ("inactive", run_index,

@@ -29,7 +29,7 @@ def _content_of(ev):
             content = json.loads(content)
         except json.JSONDecodeError:
             content = {}
-    return content
+    return content if isinstance(content, dict) else {}
 
 
 class RunDistanceStream:

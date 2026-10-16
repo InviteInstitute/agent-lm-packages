@@ -8,7 +8,9 @@ VENDORING STATUS — no longer byte-identical to VEX_model_tracing:
     live (procedure_stacks), and disabled blocks are dropped at parse time.
 
 The Blockly XML schema uses namespace https://developers.google.com/blockly/xml.
-All tag lookups require the fully-qualified name, e.g. ``{ns}block``.
+Unnamespaced input is normalized to it, so tag lookups use the fully-qualified
+name, e.g. ``{ns}block``. Input past the size bound, or carrying a DTD or
+entity declaration, is rejected as unparseable.
 
 Key XML element types handled:
   <block type="..." id="...">   — a single block node
@@ -53,6 +55,10 @@ _TAG_FIELD = f"{_B}field"
 _TAG_VARIABLES = f"{_B}variables"
 _TAG_VARIABLE = f"{_B}variable"
 
+# Real workspaces are well under 100k characters; this only turns away
+# pathological or hostile input (as invalid XML) and keeps parsing bounded.
+_MAX_XML_CHARS = 2_000_000
+
 
 def parse_workspace(xml_str: str, program_id: str) -> Optional[BlockProgram]:
     """Parse a Blockly workspace XML string into a BlockProgram.
@@ -64,12 +70,32 @@ def parse_workspace(xml_str: str, program_id: str) -> Optional[BlockProgram]:
     Returns:
         A populated BlockProgram, or None if xml_str is empty/unparseable.
     """
-    if not xml_str or not xml_str.strip():
+    try:
+        return _parse_workspace(xml_str, program_id)
+    except RecursionError:
+        # Bodies nested past the interpreter's stack: hostile input, not a
+        # program a student built (real nesting stays under ~50).
         return None
 
+
+def _parse_workspace(xml_str: str, program_id: str) -> Optional[BlockProgram]:
+    if not isinstance(xml_str, str) or not xml_str.strip() or len(xml_str) > _MAX_XML_CHARS:
+        return None
+    upper = xml_str.upper()
+    if "<!DOCTYPE" in upper or "<!ENTITY" in upper:
+        return None
     try:
         root = ET.fromstring(xml_str)
-    except ET.ParseError:
+    except (ET.ParseError, ValueError):
+        return None
+
+    # Unnamespaced Blockly XML is normalized to the Blockly namespace, so the
+    # fully-qualified tag lookups below see it. Foreign tags (the procedure
+    # <mutation>'s xhtml namespace) are left alone.
+    for el in root.iter():
+        if "}" not in el.tag:
+            el.tag = _B + el.tag
+    if root.tag != _TAG_XML:
         return None
 
     # ------------------------------------------------------------------ #

@@ -38,7 +38,7 @@ from goal_strategy import profile_to_dict
 
 XML may have the Blockly namespace or no namespace. Empty/malformed XML abstains on code and simulation while preserving valid outcome fields. Non-finite numeric outcomes abstain before scoring. Missing configuration is a deployment error and raises `ConfigError`.
 
-The parser rejects DTD/entity declarations, XML larger than 2,000,000 characters, more than 20,000 XML elements, or depth above 200. Rejection returns named invalid-XML evidence. These bounds protect parsing; the simulator's statement and simulated-time budgets are not CPU deadlines.
+The parser rejects DTD/entity declarations and XML larger than 2,000,000 characters, as named invalid-XML evidence. These bounds protect parsing; the simulator's statement and simulated-time budgets are not CPU deadlines.
 
 ## Join event evidence
 
