@@ -50,7 +50,7 @@ from goal_strategy.detector.simulation.simulate_path import (
     simulate_path,
 )
 
-from .config import _DEFAULT_CONFIGS_DIR, _load_yaml
+from .config import _DEFAULT_CONFIGS_DIR, ConfigError, _load_yaml
 from .paths import data_path, require_data
 from .indicators import _segment_closest
 
@@ -145,8 +145,20 @@ def load_scenarios(playground: str, configs_dir: str | None = None) -> list[dict
     for path in sorted(base.glob("*.yaml")):
         card = _load_yaml(path)
         if isinstance(card, dict) and card.get("scenario_id"):
+            for check in card.get("checks") or []:
+                if check.get("rule") not in _CHECK_RULES:
+                    raise ConfigError(f"unknown check rule {check.get('rule')!r} "
+                                      f"in {path.name}")
             out.append(card)
     return out
+
+
+# Every rule _evaluate_check implements; a card naming any other is broken.
+_CHECK_RULES = frozenset({
+    "proportion_cleared", "proportion_engaged", "proportion_on_island",
+    "behavioral_divergence", "min_distance", "pieces_cleared", "on_island",
+    "edge_encounters_survived",
+})
 
 
 def _iter_blocks(node):
@@ -472,7 +484,8 @@ def _evaluate_check(check: dict, positions: list, sim, baseline,
                            detail=f"{survived}/{len(eps)} encounters survived"
                                   f" (grace {grace:g}mm)")
 
-    return CheckResult(name, "fail", facet, detail=f"unknown rule {rule!r}")
+    # A rule name the engine doesn't know is a broken card, not a failed check.
+    raise ConfigError(f"unknown check rule {rule!r} in check {name!r}")
 
 
 _STATUS_RANK = {"pass": 0, "conditional": 1, "fail": 2}

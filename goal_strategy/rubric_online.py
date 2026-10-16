@@ -134,10 +134,11 @@ def rubric_dimensions(program, sim, program_id, config_version,
                       playground="castle_crashers", configs_dir=None,
                       *, report=None, workspace_xml=None):
     """[DimensionEvidence] for one run under the claims card, or None when
-    there is no parsed program to score. Pass `report` (a collect_sims battery
-    report) to share the single battery run with the other online channels;
-    otherwise a `workspace_xml` runs one here."""
-    if program is None:
+    there is no parsed program or no simulation to score (a rejected program
+    executes nothing; rung_sweep skips the same runs). Pass `report` (a
+    collect_sims battery report) to share the single battery run with the
+    other online channels; otherwise a `workspace_xml` runs one here."""
+    if program is None or sim is None:
         return None
     if report is None:
         from .testcases import run_battery

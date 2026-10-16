@@ -40,7 +40,8 @@ def _extract_workspace_xml(content):
             return ""
     if not isinstance(project, dict):
         return ""
-    return project.get("workspace", "") or ""
+    workspace = project.get("workspace")
+    return workspace if isinstance(workspace, str) else ""
 
 
 def generate_compact_prompt_from_content(content):

@@ -147,8 +147,9 @@ def _expr(block):
     # its inputs when no special case exists for it.
     fields = [_tidy(_field(block, c.attrib["name"]))
               for c in block if c.tag == "field" and c.attrib.get("name")]
-    vals = [f"{v.attrib.get('name', '').lower()} {_value_str(v)}"
-            for v in block.findall("value") if _value_str(v)]
+    # one render per slot: rendering it again to test it was 2^depth on nesting
+    rendered = [(v.attrib.get('name', '').lower(), _value_str(v)) for v in block.findall("value")]
+    vals = [f"{name} {text}" for name, text in rendered if text]
     tail = " ".join(p for p in fields + vals if p)
     return _name(t) + (f" {tail}" if tail else "")
 
@@ -216,11 +217,16 @@ def generate_readable_lines(xml_string):
         return []
     try:
         root = ET.fromstring(xml_string)
-    except ET.ParseError:
+    except (ET.ParseError, ValueError):  # ValueError: lone surrogates
         return []
     strip_namespaces(root)
-    active, orphaned = split_stacks(root)
+    try:
+        return _render(*split_stacks(root))
+    except RecursionError:   # nested past the stack: hostile, not a real program
+        return []
 
+
+def _render(active, orphaned):
     out = []
     for i, top in enumerate(active):
         if i:

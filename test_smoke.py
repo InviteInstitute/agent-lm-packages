@@ -495,6 +495,51 @@ def test_inactive_none_ts():
     assert detect_inactive_trigger(None, now=now) is None
 
 
+def test_inactive_new_streak_fires_without_waiting_for_realert():
+    # fired 6 min ago, student came back 5 min ago, idle again since: a new
+    # streak, due now, even though the host never saw them active
+    now = datetime.now(timezone.utc)
+    fire = detect_inactive_trigger(now - timedelta(minutes=5), now=now,
+                                   last_inactive_fire=(-1, now - timedelta(minutes=6)))
+    assert fire is not None and fire[1] == -2
+
+
+# ---------------------------------------------------------------------------
+# Hostile / malformed input never hangs or raises
+# ---------------------------------------------------------------------------
+# A block nested under another with the same id: sharing one map entry made
+# the block its own child, and every walk over the tree looped forever.
+DUP_IDS = ws('<block type="pg_events_when_started" id="h"><next>'
+             '<block type="pg_control_repeat" id="X"><statement name="SUBSTACK">'
+             '<block type="pg_control_forever" id="X"/></statement></block></next></block>')
+
+
+def test_duplicate_block_ids_terminate():
+    from learner_models.ast_builder import xml_to_block_ast
+    from learner_models.distance import compute_edit_distance
+    assert len(xml_to_block_ast(DUP_IDS)["nodes"]) == 3
+    assert compute_edit_distance(xml_to_block_ast(DUP_IDS), xml_to_block_ast(ws())) == 3
+    engine = smart_delta_engine()
+    engine._bootstrap_from_xml(DUP_IDS)
+    assert engine.get_runnable_block_count() == 3
+    assert "forever" in generate_compact_prompt(DUP_IDS)
+
+
+def test_bad_workspaces_do_not_raise_or_drop_runs():
+    # a lone surrogate is legal in JSON ("\ud800"), a workspace can be any JSON
+    # value, and a content string can decode to a non-object
+    bad = ['<xml><block type="a\ud800"/></xml>', 5, ["x"], None]
+    events = [{"event_type": "runProject", "content": {"project": {"workspace": w}}}
+              for w in bad] + [{"event_type": "runProject", "content": "[1, 2]"}]
+    assert len(compute_run_edit_distances(events)["runs"]) == len(events)
+    for event in events:
+        smart_delta_engine().process_log(event)
+    assert generate_readable_text(bad[0]) == "" and generate_compact_prompt(bad[0]) is None
+    engine = smart_delta_engine()
+    engine._bootstrap_from_xml(ws('<block type="pg_events_when_started" id="h" x="12px"/>'))
+    assert engine.blocks["h"]["x"] is None
+
+
 # ---------------------------------------------------------------------------
 # learner_models: session segmentation
 # ---------------------------------------------------------------------------

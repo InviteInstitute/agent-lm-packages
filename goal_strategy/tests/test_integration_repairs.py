@@ -15,10 +15,6 @@ def flags(p):
     return {f for g in p.goals for i in g.intent + g.attainment for f in i.flags}
 
 
-@pytest.mark.xfail(reason="engine port-forward 2026-09-17: the current vendored "
-                   "simulator is not fully namespace-agnostic (unnamespaced XML "
-                   "parses fewer blocks than namespaced). Faithful to upstream vex; "
-                   "queued for the port owner (§6 flag-and-queue).", strict=False)
 def test_target_unnamespaced_xml_matches_blockly_namespace():
     xml = workspace(started('A', drive_for(200)))
     plain = xml.replace(' xmlns="https://developers.google.com/blockly/xml"', '')
@@ -44,20 +40,11 @@ def test_empty_battery_is_explicitly_ineligible():
     assert b.qualifying_blocks == () and b.scenarios == ()
 
 
-@pytest.mark.xfail(reason="engine port-forward 2026-09-17: the current vendored "
-                   "simulator executes one iteration for repeat(0) "
-                   "(net_displacement 100, not 0). Reproduces upstream vex exactly; "
-                   "queued for the port owner (§6 flag-and-queue).", strict=False)
 def test_repeat_zero_does_not_execute():
     body = '<block type="pg_control_repeat" id="r"><value name="TIMES"><shadow type="math_number"><field name="NUM">0</field></shadow></value><statement name="SUBSTACK">' + drive_for(100) + '</statement></block>'
     assert coop(workspace(started('A', body))).net_displacement_from_spawn == 0
 
 
-@pytest.mark.xfail(reason="engine port-forward 2026-09-17: cooperative drivetrain "
-                   "arbitration of an absolute turn_to_heading no longer supersedes "
-                   "a concurrent drive_for (motions_superseded 0, not 1). Faithful "
-                   "to upstream vex; queued for the port owner (§6 flag-and-queue).",
-                   strict=False)
 def test_absolute_turn_arbitrates_like_relative_turn():
     turn = '<block type="pg_drivetrain_turn_to_heading" id="turn"><value name="HEADING"><shadow type="math_number"><field name="NUM">90</field></shadow></value></block>'
     sim = coop(workspace(started('A', drive_for(1000)), started('B', turn)))
@@ -74,17 +61,6 @@ def test_unknown_statement_and_loop_cap_are_visible():
     assert 'loop_capped' in flags(profile(workspace(started('A', body)), 't'))
 
 
-@pytest.mark.xfail(reason="engine port-forward 2026-09-17: the current parser no "
-                   "longer abstains every intent on 1100-deep XML (it parses/bounds "
-                   "it differently). Faithful to upstream vex; queued for the port "
-                   "owner (§6 flag-and-queue).", strict=False)
-def test_deep_xml_is_bounded_and_preserves_outcome():
-    xml = '<xml>' + '<block type="pg_events_when_started"><next>' * 1100 + '<block type="pg_drivetrain_drive_for"/>' + '</next></block>' * 1100 + '</xml>'
-    p = profile(xml, 'deep', {'weight_cleared': 700})
-    assert p.outcome_available
-    assert all(i.abstained for g in p.goals for i in g.intent)
-
-
 def test_continuous_approach_timeline(toy):
     xml = workspace(started('A', drive_for(3000)))
     p = _profile(xml, 't', playground='toy_line', configs_dir=toy)
@@ -96,10 +72,6 @@ def test_continuous_approach_timeline(toy):
 from goal_strategy.tests.test_timeline import toy
 
 
-@pytest.mark.xfail(reason="engine port-forward 2026-09-17: the current simulator "
-                   "flags `procedure_recursion_suppressed` when two separate stacks "
-                   "call the same procedure. Faithful to upstream vex; queued for the "
-                   "port owner (§6 flag-and-queue).", strict=False)
 def test_procedure_reachability_and_thread_local_recursion():
     from goal_strategy.tests.test_oi23_builds import _definition, _call
     from goal_strategy.tests.test_scheduler import MAGNET
@@ -114,11 +86,6 @@ def test_procedure_reachability_and_thread_local_recursion():
     assert next(g for g in p.goals if g.goal == 'engage_plow').intent[0].rung != 'absent'
 
 
-@pytest.mark.xfail(reason="engine port-forward 2026-09-17: non-finite reporter "
-                   "values (Infinity / overflow) raise OverflowError inside the "
-                   "current simulator instead of being caught and flagged. "
-                   "Reproduces upstream vex exactly; a real guard regression queued "
-                   "for the port owner (§6 flag-and-queue).", strict=False)
 @pytest.mark.parametrize('reporter', [
     '<block type="pg_operator_round"><value name="NUM"><shadow type="math_number"><field name="NUM">Infinity</field></shadow></value></block>',
     '<block type="pg_operator_random"><value name="FROM"><shadow type="math_number"><field name="NUM">Infinity</field></shadow></value><value name="TO"><shadow type="math_number"><field name="NUM">10</field></shadow></value></block>',
@@ -170,11 +137,6 @@ def test_procedure_only_sensor_qualifies_for_battery():
     assert report.scenarios
 
 
-@pytest.mark.xfail(reason="engine port-forward 2026-09-17: an unknown check rule "
-                   "now degrades to a failing/abstained check (testcases.py returns "
-                   "CheckResult(..., detail='unknown rule ...')) instead of raising "
-                   "ConfigError. Faithful to upstream vex; queued for the port owner "
-                   "(§6 flag-and-queue).", strict=False)
 def test_unknown_battery_rule_is_a_configuration_error(tmp_path):
     from shutil import copytree
     from goal_strategy.config import configs_root, ConfigError
@@ -192,3 +154,43 @@ def test_unknown_battery_rule_is_a_configuration_error(tmp_path):
     xml = workspace(started('A', sensor))
     with pytest.raises(ConfigError, match='unknown check rule'):
         run_battery(xml, 'invalid-config', configs_dir=str(root))
+
+
+def test_program_faults_degrade_with_flags_not_engine_errors():
+    from goal_strategy import goal_profile
+    letter = '<block type="pg_operator_find"/>'   # letter 1 of "" is the text ""
+    for body in [
+        # a break with no loop around it
+        '<block type="pg_control_break" id="b"/>',
+        # text where a number is needed (JS: NaN, never an exception)
+        '<block type="pg_variables_change_variable" id="v"><field name="VARIABLE">n</field>'
+        '<value name="VALUE"><block type="pg_operator_round"><value name="NUM">' + letter
+        + '</value></block></value></block>',
+    ]:
+        r = goal_profile(workspace(started('A', body)), 'faults')
+        assert r['status'] == 'profiled', r['reason']
+    sim = coop(workspace(started('A', '<block type="pg_control_break" id="b"/>')))
+    assert 'unmodeled_construct_defaulted' in sim.execution_flags
+
+
+def test_empty_forever_in_a_hat_is_bounded_under_the_loop_clock():
+    # inline hat stacks pass no time, and the clock lifts the unroll caps: an
+    # empty body ran a billion passes before the budget counted them
+    hat = ('<block type="pg_events_when_timer" id="t"><value name="TIME">'
+           '<shadow type="math_positive_number_only"><field name="NUM">0.1</field></shadow>'
+           '</value><next><block type="pg_control_forever" id="f"/></next></block>')
+    sim = coop(workspace(started('A', drive_for(1000)), hat),
+               loop_iteration_time_s=1 / 60, time_budget_s=30.0)
+    assert 'execution_budget_exhausted' in sim.execution_flags
+
+
+def test_bad_run_input_keeps_every_later_run_on_its_index():
+    from goal_strategy import GoalProfileStream, goal_profile
+    s = GoalProfileStream('s')
+    for workspace_value in ['<xml/>', 5, ['x'], '<xml><block type="a\ud800"/></xml>', '<xml/>']:
+        s.push({'event_type': 'runProject', 'content': {
+            'playground': 'CastleCrasherPlus', 'project': {'workspace': workspace_value}}})
+    assert [r['index'] for r in s.runs] == [0, 1, 2, 3, 4]
+    assert [r['status'] for r in s.runs][1:4] == ['invalid_input'] * 3
+    # params json can't sort (mixed key types below the top level)
+    assert goal_profile('<xml/>', 'p', {'a': {1: 2, 'b': 3}})['status'] == 'profiled'

@@ -38,7 +38,7 @@ def xml_digest(xml_string):
     """The cache key for one workspace XML. Callers that diff the same XML more
     than once (a run against the one before it, then the one after) can hash it
     once and pass the digest to edit_distance_for."""
-    return hashlib.sha1(xml_string.encode("utf-8")).digest()
+    return hashlib.sha1(xml_string.encode("utf-8", "surrogatepass")).digest()
 
 
 def edit_distance_for(prev_xml, curr_xml, prev_ast, curr_ast,

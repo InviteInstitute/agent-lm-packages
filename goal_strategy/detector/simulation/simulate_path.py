@@ -101,8 +101,37 @@ def _clamp_percent(value: float) -> float:
 # Simulator control-flow signals
 # ------------------------------------------------------------------ #
 
-class _BreakSignal(Exception):
-    """Raised by pg_control_break to exit the enclosing loop."""
+class _GateSignal(Exception):
+    """Raised by an unmet wait_until (ratified OI-3 semantics, 2026-08-19):
+    the condition never turns true, so the code below the gate never executes.
+    Halts the enclosing hat stack only — caught at the top-level dispatch and
+    at the inline-broadcast site (a gated receiver stalls without stalling
+    its broadcaster, approximating their real parallelism)."""
+
+
+class _BreakSignal(_GateSignal):
+    """Raised by pg_control_break to exit the enclosing loop. A break with no
+    loop to catch it reaches the stack driver, which ends the stack the way it
+    ends a gated one (it subclasses _GateSignal for exactly that)."""
+
+
+def _js_number(val) -> float:
+    """JS ToNumber, which VEX applies wherever a number is needed: text "" is
+    0, text that is not a number is NaN. Never raises."""
+    if isinstance(val, str):
+        try:
+            return float(val) if val.strip() else 0.0
+        except ValueError:
+            return math.nan
+    return float(val)
+
+
+def _note_escaped_break(sim, signal) -> None:
+    """At a stack driver: a break that no loop caught ended the stack. What VEX
+    does with a break outside a loop is not modelled, so say so."""
+    if isinstance(signal, _BreakSignal):
+        sim._unmodeled("pg_control_break:outside_loop")
+
 
 class _StopSignal(Exception):
     """Raised by pg_control_stop_project to terminate the entire simulation."""
@@ -141,14 +170,6 @@ class _Park:
         self.sign = sign
         self.magnitude = magnitude
         self.seconds = seconds
-
-
-class _GateSignal(Exception):
-    """Raised by an unmet wait_until (ratified OI-3 semantics, 2026-08-19):
-    the condition never turns true, so the code below the gate never executes.
-    Halts the enclosing hat stack only — caught at the top-level dispatch and
-    at the inline-broadcast site (a gated receiver stalls without stalling
-    its broadcaster, approximating their real parallelism)."""
 
 
 # ------------------------------------------------------------------ #
@@ -893,8 +914,9 @@ class _Sequencer:
                     item = next(t.gen)
                 except StopIteration:
                     t.status = _T_DONE
-                except _GateSignal:
+                except _GateSignal as sig:
                     t.status = _T_GATED
+                    _note_escaped_break(self.sim, sig)
                 else:
                     if isinstance(item, _Park):
                         self._apply_park(t, item)
@@ -1342,7 +1364,8 @@ def simulate_path(
                     # completion (VR-Seq Stage 1 — yields are no-ops here)
                     for _ in sim.execute_stack(root):
                         pass
-                except _GateSignal:
+                except _GateSignal as sig:
+                    _note_escaped_break(sim, sig)
                     continue   # unmet wait_until gates this stack only
                 finally:
                     sim._current_root_id = None
@@ -2220,7 +2243,7 @@ class _Simulator:
         # synchronously — a stall or forever inside the body faithfully
         # stalls/stops the caller.
         self.procedures: dict[str, object] = {}
-        self._active_procs: set[str] = set()      # recursion guard
+        self._active_procs: set[tuple] = set()    # recursion guard, (thread, proccode)
         self.execution_flags: list[str] = []      # program-level fidelity flags
         self.fabricated_steps: list[int] = []     # Part D: fallback-motion steps
         self.color_detections: list[tuple] = []   # sensing: (step, eye, color) True-evals
@@ -2414,6 +2437,19 @@ class _Simulator:
         if token not in self.unmodeled_constructs:
             self.unmodeled_constructs.append(token)
         self._flag("unmodeled_construct_defaulted")
+
+    def _loop_iteration(self, block) -> None:
+        """Bookkeeping for one pass of a loop. A pass with an empty body runs
+        no block, so the execution budget would never see it; it counts as
+        one here, or `forever {}` with the unroll cap lifted (budget mode)
+        spins a billion times inside a sensor hat, where no time passes."""
+        self.loops_exercised[block.block_id] = self.loops_exercised.get(block.block_id, 0) + 1
+        self.structure_trace.append((self._current_thread_idx, "LOOP_ITER", block.block_id, None))
+        if not block.children:
+            self.blocks_executed += 1
+            if self.blocks_executed > self.execution_budget:
+                self._flag("execution_budget_exhausted")
+                raise _BudgetSignal()
 
     def _loop_tick_park(self, iter_start_time: float, block):
         """Loop clock: VEX's forked control blocks give every loop iteration
@@ -2831,7 +2867,8 @@ class _Simulator:
                             if restarts >= self.forever_unroll:
                                 self._flag("hat_restart_capped")
                                 break
-                        except _GateSignal:
+                        except _GateSignal as sig:
+                            _note_escaped_break(self, sig)
                             break   # gated hat stack stalls; stays armed
                 finally:
                     self._active_hat = None
@@ -3031,6 +3068,11 @@ class _Simulator:
             # shortest-path delta at the calibrated turn velocity (was
             # instant; contaminated the duration channel for 530 runs)
             delta = (target - self.heading + 180.0) % 360.0 - 180.0
+            if self._coop():   # a turn like turn_for: arbitrated, takes time
+                self._sequencer.notify_drivetrain_command()
+                yield _Park("motion", block, mode="turn",
+                            sign=1.0 if delta >= 0 else -1.0, magnitude=abs(delta))
+                return
             dt = abs(delta) / max(self.turn_velocity_deg_per_s, 1e-9)
             self.sim_time_s += dt
             self.timer_s += dt
@@ -3058,6 +3100,11 @@ class _Simulator:
             # to the legacy form (spawn is VEX heading 0, so the absolute
             # and spawn-relative readings coincide — attribution note).
             delta_vex = rotation - self.drive_rotation_deg
+            if self._coop():   # rotation is CW+, the park's sign is CCW+
+                self._sequencer.notify_drivetrain_command()
+                yield _Park("motion", block, mode="turn",
+                            sign=-1.0 if delta_vex >= 0 else 1.0, magnitude=abs(delta_vex))
+                return
             dt = abs(delta_vex) / max(self.turn_velocity_deg_per_s, 1e-9)
             self.sim_time_s += dt
             self.timer_s += dt
@@ -3130,16 +3177,19 @@ class _Simulator:
                 # mutation was unreadable) — no-op, named flag
                 self._flag("procedure_undefined")
                 return
-            if name in self._active_procs:
+            # Per thread: two stacks running the same My Block at once is not
+            # recursion (each thread has its own call stack).
+            active = (self._current_thread_idx, name)
+            if active in self._active_procs:
                 # VEX would recurse; unrolling recursion needs a depth model
                 # we don't have — suppress the nested call, flag it
                 self._flag("procedure_recursion_suppressed")
                 return
-            self._active_procs.add(name)
+            self._active_procs.add(active)
             try:
                 yield from self.execute_stack(body)
             finally:
-                self._active_procs.discard(name)
+                self._active_procs.discard(active)
             return
         if bt in ("procedures_definition", "procedures_prototype"):
             return   # bodies execute only via their calls
@@ -3166,10 +3216,10 @@ class _Simulator:
                 for stack in stacks:   # document order
                     try:
                         yield from self.execute_stack(stack)
-                    except _GateSignal:
+                    except _GateSignal as sig:
                         # A gated receiver stalls without stalling its
                         # broadcaster (they run in parallel in reality).
-                        pass
+                        _note_escaped_break(self, sig)
             finally:
                 self.active_broadcasts.discard(key)
             return
@@ -3177,13 +3227,12 @@ class _Simulator:
         # ---- Variables ----
         if bt in ("pg_variables_set_variable", "variables_set"):
             name = block.get_field("VARIABLE") or ""
-            val = self._eval_expression(block.values[0]) if block.values else 0
-            self.variables[name] = float(val)
+            self.variables[name] = self._eval_number(block.values[0]) if block.values else 0.0
             return
 
         if bt in ("pg_variables_change_variable", "variables_change", "math_change"):
             name = block.get_field("VARIABLE") or ""
-            delta = float(self._eval_expression(block.values[0])) if block.values else 0
+            delta = self._eval_number(block.values[0]) if block.values else 0
             self.variables[name] = self.variables.get(name, 0) + delta
             return
 
@@ -3265,8 +3314,7 @@ class _Simulator:
             broke = False
             for _ in range(self.forever_unroll):
                 _t0 = self.sim_time_s
-                self.loops_exercised[block.block_id] = self.loops_exercised.get(block.block_id, 0) + 1
-                self.structure_trace.append((self._current_thread_idx, "LOOP_ITER", block.block_id, None))
+                self._loop_iteration(block)
                 try:
                     for child in block.children:
                         yield from self.execute_stack(child)
@@ -3298,8 +3346,7 @@ class _Simulator:
                 broke = False
                 for _ in range(self.forever_unroll):
                     _t0 = self.sim_time_s
-                    self.loops_exercised[block.block_id] = self.loops_exercised.get(block.block_id, 0) + 1
-                    self.structure_trace.append((self._current_thread_idx, "LOOP_ITER", block.block_id, None))
+                    self._loop_iteration(block)
                     try:
                         for child in block.children:
                             yield from self.execute_stack(child)
@@ -3317,15 +3364,14 @@ class _Simulator:
                 if not broke:
                     self._forever_completed = True
                 return
-            raw_n = int(raw or 1)
+            raw_n = max(0, int(raw))   # repeat 0 (or an empty slot) runs nothing
             n = min(raw_n, self.max_unroll)
             if raw_n > self.max_unroll:
                 self.loop_was_capped = True
                 self.loop_cap_steps.append(self.step)   # stage 0b: per-span fidelity
             for _ in range(n):
                 _t0 = self.sim_time_s
-                self.loops_exercised[block.block_id] = self.loops_exercised.get(block.block_id, 0) + 1
-                self.structure_trace.append((self._current_thread_idx, "LOOP_ITER", block.block_id, None))
+                self._loop_iteration(block)
                 try:
                     for child in block.children:
                         yield from self.execute_stack(child)
@@ -3363,8 +3409,7 @@ class _Simulator:
                         self.loop_cap_steps.pop(_cap_idx)
                     break
                 _t0 = self.sim_time_s
-                self.loops_exercised[block.block_id] = self.loops_exercised.get(block.block_id, 0) + 1
-                self.structure_trace.append((self._current_thread_idx, "LOOP_ITER", block.block_id, None))
+                self._loop_iteration(block)
                 try:
                     for child in block.children:
                         yield from self.execute_stack(child)
@@ -3403,8 +3448,7 @@ class _Simulator:
                         self.loop_cap_steps.pop(_cap_idx)
                     break
                 _t0 = self.sim_time_s
-                self.loops_exercised[block.block_id] = self.loops_exercised.get(block.block_id, 0) + 1
-                self.structure_trace.append((self._current_thread_idx, "LOOP_ITER", block.block_id, None))
+                self._loop_iteration(block)
                 try:
                     for child in block.children:
                         yield from self.execute_stack(child)
@@ -4069,6 +4113,13 @@ class _Simulator:
         self._unmodeled(f"comparison_op={op or '<absent>'}")
         return False
 
+    def _eval_number(self, block: BlockNode) -> float:
+        """A reporter's value as a number, by the JS rules VEX runs on: text
+        "" is 0, text that is not a number is NaN. Never raises, so a text
+        reporter in a numeric slot degrades through the non-finite handling
+        instead of aborting the simulation."""
+        return _js_number(self._eval_expression(block))
+
     def _eval_expression(self, block: BlockNode) -> float | bool | str:
         """Recursively evaluate a reporter (value) block.
 
@@ -4153,13 +4204,13 @@ class _Simulator:
             return 0.0
 
         if bt == "pg_operator_remainder":
-            a = float(self._eval_expression(block.values[0])) if block.values else 0.0
-            b = float(self._eval_expression(block.values[1])) if len(block.values) > 1 else 1.0
+            a = self._eval_number(block.values[0]) if block.values else 0.0
+            b = self._eval_number(block.values[1]) if len(block.values) > 1 else 1.0
             return a % b if b != 0 else 0.0
 
         if bt == "pg_operator_random":
-            lo = int(float(self._eval_expression(block.values[0]))) if block.values else 0
-            hi = int(float(self._eval_expression(block.values[1]))) if len(block.values) > 1 else 1
+            lo = self._eval_number(block.values[0]) if block.values else 0.0
+            hi = self._eval_number(block.values[1]) if len(block.values) > 1 else 1.0
             # Deterministic midpoint, NOT random.randint (2026-08-18): replay
             # identity requires deterministic paths (the frozen-fixture tripwire
             # and the old project's BUG-14 lesson). The midpoint is the expected
@@ -4176,6 +4227,9 @@ class _Simulator:
             # a flag (the motions_superseded precedent).
             self.nondeterministic_draws += 1
             self._flag("nondeterministic_variable")
+            if not (math.isfinite(lo) and math.isfinite(hi)):
+                return (lo + hi) / 2.0   # as JS: a non-finite bound draws inf / NaN
+            lo, hi = int(lo), int(hi)
             lo, hi = min(lo, hi), max(lo, hi)
             if self.random_policy == "midpoint":
                 return float((lo + hi) / 2.0)
@@ -4186,8 +4240,8 @@ class _Simulator:
             return float(self._rng.randint(lo, hi))
 
         if bt == "pg_operator_round":
-            val = float(self._eval_expression(block.values[0])) if block.values else 0.0
-            return float(round(val))
+            val = self._eval_number(block.values[0]) if block.values else 0.0
+            return float(round(val)) if math.isfinite(val) else val   # JS: round(inf) = inf
 
         if bt == "pg_operator_function":
             # Zero corpus incidence and the docs do not expose the XML field
@@ -4198,7 +4252,7 @@ class _Simulator:
             if fn_raw is None:
                 self._unmodeled("pg_operator_function.OPERATOR=<absent>")
             fn = (fn_raw or "abs").lower()
-            val = float(self._eval_expression(block.values[0])) if block.values else 0.0
+            val = self._eval_number(block.values[0]) if block.values else 0.0
             _fn_map = {
                 "abs": abs, "floor": math.floor, "ceiling": math.ceil,
                 "sqrt": math.sqrt, "sin": math.sin, "cos": math.cos,
@@ -4213,12 +4267,14 @@ class _Simulator:
                     return float(fn_callable(val))
                 except (ValueError, ZeroDivisionError):
                     return 0.0
+                except OverflowError:   # JS: floor(inf) = inf, e^1000 = inf
+                    return val if fn in ("floor", "ceiling") else math.inf
             self._unmodeled(f"pg_operator_function.fn={fn}")
             return val
 
         if bt == "pg_operator_function_atan2":
-            y = float(self._eval_expression(block.values[0])) if block.values else 0.0
-            x = float(self._eval_expression(block.values[1])) if len(block.values) > 1 else 1.0
+            y = self._eval_number(block.values[0]) if block.values else 0.0
+            x = self._eval_number(block.values[1]) if len(block.values) > 1 else 1.0
             return math.degrees(math.atan2(y, x))
 
         # ---- Comparison operators ----
@@ -4283,14 +4339,15 @@ class _Simulator:
             return term in s
 
         if bt == "pg_operator_find":
-            pos = int(float(self._eval_expression(block.values[0]))) if block.values else 1
+            pos = self._eval_number(block.values[0]) if block.values else 1.0
+            pos = int(pos) if math.isfinite(pos) else 0
             s   = str(self._eval_expression(block.values[1])) if len(block.values) > 1 else ""
             return s[pos - 1] if 0 < pos <= len(s) else ""
 
         if bt == "pg_operator_convert":
             val = self._eval_expression(block.values[0]) if block.values else 0
             typ = (block.get_field("TYPE") or "number").lower()
-            return str(val) if typ in ("text", "string") else float(val)
+            return str(val) if typ in ("text", "string") else _js_number(val)
 
         # ---- Tier 3 sensing — floor color ----
         # Sensing build Phase 1 (2026-08-19, OI-10 + OI-5 partial): the check
