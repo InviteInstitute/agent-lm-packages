@@ -1,20 +1,25 @@
 # agent-lm-packages
 
-Three small, **pure** Python packages that turn a VEX (VEXcode VR) student's block event
-stream into things an agent can act on: the current workspace, behavioral triggers, and
-goal evidence with explicit uncertainty. No database, no web framework. Each package takes plain
-data in and returns plain data back, so any host (reflecks, the agent server, a notebook)
-can drive them.
+This repository has three small, **pure** Python packages. They change the block event stream of a
+VEX (VEXcode VR) student into data that an agent can use:
 
-Each folder has its own README. Install all three with `pip install .` from the repo root.
+- The current workspace
+- Behavioral triggers
+- Goal evidence with explicit uncertainty
+
+The packages use no database and no web framework. Each package takes plain data and returns plain
+data, so any host (reflecks, the agent server, a notebook) can drive them.
+
+Each folder has its own README. To install all three packages, run `pip install .` from the
+repository root.
 
 ## The three packages
 
 | Folder | What it does | Deps | Status |
 |---|---|---|---|
-| [`log_parser_delta_engine/`](log_parser_delta_engine/) | Rebuild the current VEX workspace from a log stream (or one project XML) and render it as pseudo-code (compact + readable), live code split from orphans. | stdlib | populated |
+| [`log_parser_delta_engine/`](log_parser_delta_engine/) | Rebuilds the current VEX workspace from a log stream (or one project XML). Renders the workspace as pseudo-code (compact and readable), with live code split from orphans. | stdlib | populated |
 | [`learner_models/`](learner_models/) | Per-run edit distances (APTED), the 5 behavioral triggers, and session episodes. | `apted` | populated |
-| [`goal_strategy/`](goal_strategy/) | Goal profiles, simulation, timelines, sensor battery and optional review tools. | `pyyaml`; analysis/UI extras | populated |
+| [`goal_strategy/`](goal_strategy/) | Goal profiles, simulation, timelines, sensor battery and optional review tools. | `pyyaml`, plus analysis/UI extras | populated |
 
 ## How they fit together
 
@@ -37,20 +42,21 @@ flowchart LR
 
 ## Two workspace renderers
 
-Both renderers live in `log_parser_delta_engine`. They render the same VEX workspace as
-pseudo-code, for two audiences. The names follow one pattern, `generate_<style>_<form>`,
-so which one is needed is readable off the call.
+Both renderers are in `log_parser_delta_engine`. They render the same VEX workspace as pseudo-code,
+for two audiences. The names use one pattern, `generate_<style>_<form>`, so the name of a call shows
+which renderer it needs.
 
 | Renderer | Audience | What it does |
 |---|---|---|
-| `generate_compact_prompt` (standalone) / `smart_delta_engine.generate_compact_prompt()` (method) | LLM | Token-cheap listing split into `[Active]` (a hat stack or a called My Block) and `[Orphaned]`. Strips noisy `pg_`/`aim_`/`mixed_` prefixes. No name lookup. Value-slot literals (drive distance, turn degrees) folded into parent fields. |
-| `generate_readable_text` / `generate_readable_lines` | Human | Full display names from `vex_blocks.json`, infix operators (`A < B`), tidied enums (`fwd` to `forward`), inline reporter values, `else:` branch labels. Live stacks first, orphans after under `not connected (won't run):`. |
+| `generate_compact_prompt` (standalone) / `smart_delta_engine.generate_compact_prompt()` (method) | LLM | Makes a token-cheap listing split into `[Active]` (a hat stack or a called My Block) and `[Orphaned]`. Removes noisy `pg_`/`aim_`/`mixed_` prefixes. Does no name lookup. Folds value-slot literals (drive distance, turn degrees) into parent fields. |
+| `generate_readable_text` / `generate_readable_lines` | Human | Uses full display names from `vex_blocks.json`, infix operators (`A < B`), tidied enums (`fwd` to `forward`), inline reporter values and `else:` branch labels. Shows live stacks first, and orphans after them under `not connected (won't run):`. |
 
-Each renderer also has a `_from_content` variant that takes a parsed VEX log content dict
-and extracts the workspace XML internally (e.g. `generate_compact_prompt_from_content`).
+Each renderer also has a `_from_content` variant, for example
+`generate_compact_prompt_from_content`. This variant takes a parsed VEX log content dict and
+extracts the workspace XML internally.
 
-Use **compact** when building an LLM prompt (spend tokens on structure, not prose). Use
-**readable** when showing the code to a person.
+Use **compact** when you build an LLM prompt, to spend tokens on structure and not on prose. Use
+**readable** when you show the code to a person.
 
 ## Data contract (what you feed in)
 
@@ -72,17 +78,17 @@ Each function reads only what it needs:
 | `generate_compact_prompt(xml_string)` | one workspace XML string | pseudo-code `str`, or `None` if empty |
 | `generate_compact_prompt_from_content(content)` | parsed VEX log content dict | pseudo-code `str`, or `None` if empty |
 
-The host supplies these (an adapter from wherever events are stored). Nothing in here
-touches a DB. The one stateful trigger, `inactive`, leaves its two DB touch-points to the
-caller. See [`learner_models/README.md`](learner_models/README.md).
+The host supplies these events, through an adapter from wherever it stores them. Nothing in this
+repository touches a DB. The one stateful trigger, `inactive`, leaves its two DB touch-points to
+the caller. See [`learner_models/README.md`](learner_models/README.md).
 
-There's a runnable walkthrough in [`examples/end_to_end.py`](examples/end_to_end.py)
-that feeds synthetic event streams through all three packages. Goal evidence does not select feedback or change learner-model triggers.
+[`examples/end_to_end.py`](examples/end_to_end.py) is a runnable walkthrough. It feeds synthetic
+event streams through all three packages. Goal evidence does not select feedback or change
+learner-model triggers.
 
-Goal evidence can also be produced **online**, one event at a time, for a host that
-watches a student code and wants a profile the moment each run finishes:
-`goal_strategy.GoalProfileStream` pushes events as they arrive and yields the same
-runs the batch call produces for the same prefix. See
+A host can also produce goal evidence **online**, one event at a time, to get a profile the moment
+each run finishes. `goal_strategy.GoalProfileStream` receives events as they arrive. It gives the
+same runs that the batch call produces for the same prefix. See
 [`examples/realtime.py`](examples/realtime.py) and the goal_strategy README.
 
 ## Install / test
@@ -94,4 +100,6 @@ python examples/end_to_end.py            # narrated walkthrough with real output
 python examples/realtime.py              # online goal profiling, event by event
 ```
 
-Install `.[dev]` and run `python -m pytest -q -m "not corpus"` for standalone goal validation. See [goal_strategy/README.md](goal_strategy/README.md) for associated-outcome APIs, optional tools, external data paths, and full-corpus qualification.
+For standalone goal validation, install `.[dev]` and run `python -m pytest -q -m "not corpus"`.
+[goal_strategy/README.md](goal_strategy/README.md) covers associated-outcome APIs, optional tools,
+external data paths and full-corpus qualification.
