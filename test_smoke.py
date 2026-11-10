@@ -404,8 +404,9 @@ def test_edit_distance_identical_runs():
 
 
 def test_edit_distance_different_runs():
-    xml_a = '<xml><block type="pg_drive" id="b1"/></xml>'
-    xml_b = '<xml><block type="pg_drive" id="b1"/><block type="pg_turn" id="b2"/></xml>'
+    # Only code connected to a when-started stack affects run distances.
+    xml_a = '<xml><block type="pg_events_when_started" id="s"><next><block type="pg_drive" id="b1"/></next></block></xml>'
+    xml_b = '<xml><block type="pg_events_when_started" id="s"><next><block type="pg_drive" id="b1"><next><block type="pg_turn" id="b2"/></next></block></next></block></xml>'
     events = [_make_run(1000.0, xml_a), _make_run(2000.0, xml_b)]
     runs = compute_run_edit_distances(events)["runs"]
     assert runs[0]["edit_distance"] is None

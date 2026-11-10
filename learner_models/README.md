@@ -67,8 +67,18 @@ only when it actually computes a distance, so identical re-runs and cached pairs
 - APTED is roughly cubic. The package does not compare a pair if either program has more than
   `MAX_DIFF_BLOCKS` (600) blocks. The `edit_distance` of that pair is `None`, like the first run
   after a playground switch. Real runs reach a maximum near 180 blocks.
-- Two runs with identical trees score 0 without APTED. For example, only a number changed, and
-  shadow literals are not in the AST.
+- Run scoring preserves NUM/TEXT literal inputs in parent fields, without adding
+  shadow nodes. Changing drive distance 100 to 150 scores 1; adding a drive block
+  with that literal still costs one block insertion.
+- Only real blocks reachable from top-level `pg_events_when_started` stacks are
+  scored. All such stacks are included; detached blocks do not affect distance
+  or the 600-block limit. No start stack means an empty scoring tree. This is
+  structural reachability, not procedure-call analysis.
+- The general `xml_to_block_ast` parser is unchanged. The batch and live run APIs
+  both use the corrected scoring builder. Trigger thresholds are unchanged.
+- Existing computed scores and downstream triggers must be recomputed to adopt
+  this policy; historical alerts are not retroactively rewritten.
+- Two runs with identical scored trees return 0 without APTED.
 - The distance cache is an LRU of the most recent 50,000 XML pairs.
 
 ## Output shapes

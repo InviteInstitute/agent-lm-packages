@@ -18,7 +18,8 @@ Public API:
 """
 import json
 
-from .ast_builder import xml_to_block_ast, extract_workspace_xml
+from .ast_builder import extract_workspace_xml
+from .scoring_ast import scoring_ast
 from .distance import edit_distance_for, xml_digest
 
 
@@ -79,7 +80,7 @@ class _LazyAst:
 
     def __call__(self):
         if self._ast is None:
-            self._ast = xml_to_block_ast(self._xml)
+            self._ast = scoring_ast(self._xml)
         return self._ast
 
 
