@@ -336,8 +336,6 @@ def scenario_evidence(program, result, artifact, card) -> ScenarioEvidence:
     for pid, s in sorted((sim.object_contacts or {}).items(), key=lambda kv: kv[1]):
         if s >= onset and _in_window(s):
             seams.append((int(s), "engage"))
-    last_contact = max((sim.object_contacts or {}).items(),
-                       key=lambda kv: kv[1], default=(None, None))
     for pid, s in sorted((sim.pieces_cleared or {}).items(), key=lambda kv: kv[1]):
         if not _in_window(s):
             continue

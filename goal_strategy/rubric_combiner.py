@@ -295,7 +295,7 @@ def explain_run(run_id: str, batt_rows: list, prod: dict | None,
     rows = [r for r in batt_rows if r.get("abstained") != "True"]
     feats = _run_features(rows, prod, stays)
     final = {d.dimension: d for d in
-             combine_run(run_id, batt_rows, prod, ceilings, claims,
+             combine_run(run_id, rows, prod, ceilings, claims,
                          stays=stays)}
     out = {}
     for dim, spec in (claims.get("dimensions") or {}).items():

@@ -256,7 +256,7 @@ def _scan_region_coverage(goal, kind, spec, cfg, full, ectx, scored_last):
                 hi = mid
             else:
                 lo = mid + 1
-        step = lo - 1
+        step = lo - 1 if full.path else ORIGIN_STEP
         rung = spec.rungs.labels[edge_i + 1]
         events.append(_event(step, full, goal, kind, spec, cur, rung, cov_at(lo)))
         cur = rung

@@ -72,7 +72,9 @@ def _engage_plow_claim(profile):
     proximity = _rung(profile, "engage_plow", "plow_proximity_execution")
     if proximity == "attach_estimated":
         claim = "attached"
-    elif magnet in ("present_not_boost", "boost"):
+    elif proximity == "armed_never_close" or (proximity is None and magnet == "boost"):
+        # the simulated arming decides; authored boost only stands in when
+        # there is no simulation (present_not_boost never energizes)
         claim = "armed_not_attached"
     elif approach in ("reached", "near"):
         claim = "approached_not_armed"

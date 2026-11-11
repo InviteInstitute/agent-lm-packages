@@ -194,3 +194,102 @@ def test_bad_run_input_keeps_every_later_run_on_its_index():
     assert [r['status'] for r in s.runs][1:4] == ['invalid_input'] * 3
     # params json can't sort (mixed key types below the top level)
     assert goal_profile('<xml/>', 'p', {'a': {1: 2, 'b': 3}})['status'] == 'profiled'
+
+
+def test_random_draws_depend_on_the_program_not_its_id():
+    # the result cache omits program_id, so the simulation must too
+    from goal_strategy.detector.parsing.parse_blocks import parse_workspace
+    from goal_strategy.detector.simulation.simulate_path import simulate_path
+    from goal_strategy.tests.test_scheduler import ctx
+    rand = ('<block type="pg_operator_random"><value name="FROM"><shadow type="math_number">'
+            '<field name="NUM">1</field></shadow></value><value name="TO"><shadow type="math_number">'
+            '<field name="NUM">500</field></shadow></value></block>')
+    body = '<block type="pg_drivetrain_drive_for" id="d"><value name="AMOUNT">' + rand + '</value></block>'
+    xml = workspace(started('A', '<block type="pg_control_repeat" id="r"><value name="TIMES">'
+                            '<shadow type="math_number"><field name="NUM">5</field></shadow></value>'
+                            '<statement name="SUBSTACK">' + body + '</statement></block>'))
+    paths = [[(p.x, p.y) for p in simulate_path(parse_workspace(xml, pid), ctx()).path]
+             for pid in ('student/a/1', 'student/b/7')]
+    assert paths[0] == paths[1] and len(paths[0]) == 5
+
+
+def test_explain_run_scores_the_rows_it_explains():
+    from goal_strategy.rubric_combiner import combine_run, explain_run, load_claims
+    claims = load_claims()
+    live = [{'family': 'f1', 'scenario': 's1', 'abstained': 'False'}]
+    abstained = {'family': 'f2', 'scenario': 's2', 'abstained': 'True',
+                 'code_max_arm_alternations': '9'}
+    explained = explain_run('r', live + [abstained], None, {}, claims)
+    for de in combine_run('r', live, None, {}, claims):
+        assert explained[de.dimension]['final'] == de.label
+
+
+def test_code_after_a_forever_with_a_break_is_live():
+    from goal_strategy.detector.parsing.parse_blocks import parse_workspace
+    from goal_strategy.rubric_evidence import statically_dead_ids
+    loop = ('<block type="pg_control_forever" id="f"><statement name="SUBSTACK">'
+            '<block type="pg_control_if_then" id="i"><statement name="SUBSTACK">'
+            '<block type="pg_control_break" id="b"/></statement></block></statement>'
+            '<next>' + drive_for(100) + '</next></block>')
+    inner = ('<block type="pg_control_forever" id="f"><statement name="SUBSTACK">'
+             '<block type="pg_control_repeat" id="r"><statement name="SUBSTACK">'
+             '<block type="pg_control_break" id="b"/></statement></block></statement>'
+             '<next>' + drive_for(100) + '</next></block>')
+    escaping = parse_workspace(workspace(started('A', loop)), 't')
+    caught = parse_workspace(workspace(started('A', inner)), 't')
+    drive_id = next(b.block_id for b in escaping.iter_all_blocks()
+                    if b.block_type == 'pg_drivetrain_drive_for')
+    assert drive_id not in statically_dead_ids(escaping)
+    assert drive_id in statically_dead_ids(caught)   # the break only leaves the repeat
+
+
+def test_plow_claim_needs_the_magnet_armed():
+    from goal_strategy.rollup_online import goal_rollup
+    from goal_strategy.tests.test_scheduler import MAGNET
+    drop = MAGNET.replace('>boost<', '>drop<')
+    p = profile(workspace(started('A', drop)), 't')
+    assert goal_rollup(p, None)['goals']['engage_plow']['claim'] == 'not_pursued'
+
+
+def test_repeat_nan_runs_nothing():
+    body = ('<block type="pg_control_repeat" id="r"><value name="TIMES"><shadow type="math_number">'
+            '<field name="NUM">NaN</field></shadow></value><statement name="SUBSTACK">'
+            + drive_for(100) + '</statement></block>')
+    sim = coop(workspace(started('A', body)))
+    assert sim.net_displacement_from_spawn == 0
+    assert 'nonfinite_numeric_clamped' in sim.execution_flags
+
+
+def test_calibration_pools_constructs_like_the_served_rollup(tmp_path):
+    # one relative scenario ran under two constructs plus an abstained third:
+    # the predictor is their mean, never the last row written
+    pytest.importorskip('pandas')
+    import csv as _csv
+    from goal_strategy.goal_calibration import calibration_table
+    head = ['run_id', 'eligible', 'scenario', 'check', 'status', 'value', 'capped', 'abstain_reason']
+    rows = [['r1', 'True', 't2a', 'stays_on_island', 'measured', v, 'False', a]
+            for v, a in (('1.0', ''), ('0.0', ''), ('', 'encounter_not_reached'))]
+    for name, header, body in (('stage3_battery.csv', head, rows),
+                               ('stage2_rungs.csv', ['run_id'], [['r1']]),
+                               ('stage2_fidelity.csv', ['run_id'], [['r1']])):
+        with open(tmp_path / name, 'w', newline='') as fh:
+            w = _csv.writer(fh)
+            w.writerow(header)
+            w.writerows(body)
+    df = calibration_table(str(tmp_path))
+    assert df.loc[0, 't2a__stays_on_island'] == 0.5
+    assert df.loc[0, 't2a__abstain'] == 'encounter_not_reached'
+
+
+def test_assembly_fingerprint_names_the_shipped_cards(tmp_path):
+    # the default root pointed two levels above the package: every card id
+    # came back blank and the reproducibility sidecar recorded nothing
+    from goal_strategy.profile_assembly import assemble
+    for name, text in (('stage2_rungs.csv', 'run_id\nr1\n'),
+                       ('stage3_battery_evidence.csv', 'run_id,channel\n'),
+                       ('stage3_battery.csv', 'run_id,scenario,goal\n'),
+                       ('stage6_rubric.csv', 'run_id,dimension\n')):
+        (tmp_path / name).write_text(text)
+    assemble(tmp_path, tmp_path / 'out.csv')
+    meta = json.loads((tmp_path / 'out.csv.meta.json').read_text())
+    assert all(meta[k] for k in ('rollup_id', 'claims_id', 'registry_id', 'router_id'))

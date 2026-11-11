@@ -162,12 +162,13 @@ def sweep(out_path: str, playground: str = "castle_crashers",
         # written by rung_sweep as stage2_code_evidence.csv.
         ce_path = _RP(out_path).with_name("stage2_code_evidence.csv")
         if ce_path.exists():
-            for row in _csv.DictReader(open(ce_path)):
-                try:
-                    prod_alt[row["run_id"]] = int(
-                        row.get("max_arm_alternations") or 0)
-                except ValueError:
-                    pass
+            with open(ce_path, newline="") as ce_fh:
+                for row in _csv.DictReader(ce_fh):
+                    try:
+                        prod_alt[row["run_id"]] = int(
+                            row.get("max_arm_alternations") or 0)
+                    except ValueError:
+                        pass
     last_tel = {}
     for r in runs:
         if r.playground_params:
@@ -175,13 +176,12 @@ def sweep(out_path: str, playground: str = "castle_crashers",
     validation = set(last_tel.values())
 
     n = eligible_n = 0
-    with open(out_path, "w", newline="") as fh:
+    from pathlib import Path as _Path
+    _op = _Path(out_path)
+    ev_path = _op.with_name(_op.stem + "_evidence.csv")
+    with open(out_path, "w", newline="") as fh, open(ev_path, "w", newline="") as ev_fh:
         w = csv.DictWriter(fh, fieldnames=HEADER)
         w.writeheader()
-        from pathlib import Path as _Path
-        _op = _Path(out_path)
-        ev_path = _op.with_name(_op.stem + "_evidence.csv")
-        ev_fh = open(ev_path, "w", newline="")
         ew = csv.DictWriter(ev_fh, fieldnames=EV_HEADER)
         ew.writeheader()
         from goal_strategy.detector.parsing.parse_blocks import parse_workspace
@@ -216,7 +216,8 @@ def sweep(out_path: str, playground: str = "castle_crashers",
                     except Exception:
                         prog0 = None
                     ambiguous = prod_alt.get(r.run_id, 0) == 0
-                    if prog0 is not None and ambiguous                             and downeye_only_sensing(prog0):
+                    if prog0 is not None and ambiguous \
+                            and downeye_only_sensing(prog0):
                         routed = True
                 if routed:
                     # RUBRIC-ONLY channel: boundary family, primary budget,
@@ -298,7 +299,8 @@ def sweep(out_path: str, playground: str = "castle_crashers",
                             program, res, art,
                             cards.get(res.scenario_id, {}))
                     ew.writerow(_evidence_row(ident, ev))
-                for goal, gb in banded_invariant(reports, rollup_card).items():
+                for goal, gb in banded_invariant(reports, rollup_card,
+                                                 playground=playground).items():
                     w.writerow({
                         **ident, "channel": "goal", "eligible": True,
                         "scenario": "__goal_band__", "goal": goal,
@@ -319,7 +321,6 @@ def sweep(out_path: str, playground: str = "castle_crashers",
                 print(f"  {n}/{len(runs)}")
                 fh.flush()
                 ev_fh.flush()
-        ev_fh.close()
     return {"runs": n, "eligible": eligible_n,
             "validation_307": len(validation)}
 

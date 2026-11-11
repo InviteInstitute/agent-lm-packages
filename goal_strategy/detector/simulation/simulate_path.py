@@ -1203,7 +1203,9 @@ def simulate_path(
     # budgets — must draw the SAME sequence so their comparison measures the
     # program, not our sampling. zlib.crc32, never hash(): str hashing is
     # salted per process, which would make every session differ.
-    _seed = _zlib.crc32((getattr(program, "program_id", "") or "").encode())
+    # Seeded from the program TEXT: program_id is a label (the adapter's result
+    # cache omits it), so the same program must draw the same values under any id.
+    _seed = _zlib.crc32((getattr(program, "raw_xml", "") or "").encode("utf-8", "surrogatepass"))
     sim = _Simulator(context, random_seed=_seed, random_policy=random_policy)
     # Part A (task 3): broadcast receivers execute inline at their broadcast
     # site, keyed on BROADCAST_OPTION — never in the top-level document-order
@@ -3335,6 +3337,9 @@ class _Simulator:
 
         if "repeat" in bt and "until" not in bt:
             raw = self._first_numeric_raw(block, "TIMES")
+            if math.isnan(raw):
+                self._flag("nonfinite_numeric_clamped")
+                raw = 0.0
             if not math.isfinite(raw):
                 # reviewer-probed 2026-08-24: `repeat Infinity` LOOPS like
                 # forever in VEX VR (it does not hang). Same capped-forever

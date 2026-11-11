@@ -24,6 +24,7 @@ reviewer):
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 
 from .detector.parsing.block_program import procedure_name
@@ -257,9 +258,11 @@ def calibration_audit(program, geometry_mm: "list[float]",
                 if cand is not None and cand.block_type in _LITERAL_TYPES:
                     v = cand.get_field("NUM")
                     try:
-                        lits.append(abs(float(v)))
+                        v = abs(float(v))
                     except (TypeError, ValueError):
-                        pass
+                        continue
+                    if math.isfinite(v):
+                        lits.append(v)
     matches = 0
     for lit in lits:
         for g in geometry_mm:
@@ -325,7 +328,8 @@ def statically_dead_ids(program) -> set:
                     dead.add(x.block_id)
             for ch in cur.children:
                 _sweep(ch, dead_mode)
-            if cur.block_type == "pg_control_forever" and not dead_mode:
+            if cur.block_type == "pg_control_forever" and not dead_mode \
+                    and not _breaks_out(cur):
                 _sweep(cur.next, True)
                 return
             cur = cur.next
@@ -333,6 +337,22 @@ def statically_dead_ids(program) -> set:
     for root in program.live_stacks:
         _sweep(root, False)
     return dead
+
+
+def _breaks_out(loop) -> bool:
+    """True when a break in the loop's body, outside any inner loop, exits it
+    (the simulator then runs the code after the loop)."""
+    pending = list(loop.children)
+    while pending:
+        node = pending.pop()
+        if node is None:
+            continue
+        if node.block_type == "pg_control_break":
+            return True
+        pending.append(node.next)
+        if not any(k in node.block_type for k in ("forever", "repeat", "while")):
+            pending.extend(node.children)   # an inner loop catches its own breaks
+    return False
 
 
 def fixed_motion_vocabulary(program, dead: set | None = None) -> dict:

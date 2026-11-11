@@ -33,6 +33,8 @@ import re
 import subprocess
 from pathlib import Path
 
+from .paths import data_path
+
 ASSEMBLY_VERSION = "1.0.0"
 
 # The rubric ships PROVISIONAL while Stage 2E rubric validation is
@@ -182,8 +184,9 @@ def assemble(data_dir: str | Path, out_csv: str | Path,
             for chunk in iter(lambda: f.read(1 << 20), b""):
                 h.update(chunk)
         return h.hexdigest()[:12]
-    root = Path(configs_root) if configs_root else \
-        Path(__file__).resolve().parents[2]
+    # the directory holding configs/ (the installed package by default);
+    # git runs there too, inside the checkout when there is one
+    root = Path(configs_root) if configs_root else Path(__file__).resolve().parent
     import yaml
     tc = root / "configs" / "testcases" / "castle_crashers"
     ids = {}
@@ -222,9 +225,7 @@ def assemble(data_dir: str | Path, out_csv: str | Path,
 def main(argv=None) -> int:
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--out", required=True)
-    ap.add_argument("--data",
-                    default=str(Path(__file__).resolve().parents[2]
-                                / "data" / "ccp_run_dataset"))
+    ap.add_argument("--data", default=str(data_path("ccp_run_dataset")))
     args = ap.parse_args(argv)
     print("DONE", assemble(args.data, args.out))
     return 0

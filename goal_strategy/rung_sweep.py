@@ -69,60 +69,21 @@ def sweep(out_path: str, playground: str = "castle_crashers") -> dict:
     header = identity_columns() + indicator_columns(playground)
     # Production-side rubric code evidence (reviewer-ruled 2026-09-05):
     # emitted in the SAME pass so the D-c production-vs-battery claims
-    # never require re-simulating. One row per run.
-    from pathlib import Path as _P
-    from .rubric_evidence import (calibration_audit, card_geometry_targets,
-                                  code_evidence,
-                                  smc_lower_columns as _smc_lower_columns)
-    from .rubric_combiner import load_claims
-    from .config import _DEFAULT_CONFIGS_DIR as _CFG, _load_yaml as _ly
-    from pathlib import Path as _P2
-    _pg = _ly(_P2(_CFG) / "playgrounds" / f"{playground}.yaml")
-    _geo = card_geometry_targets(_pg)
-    _claims = load_claims(playground)
-    _tol = float(_claims.get("calibration_tolerance_pct") or 10.0)
-    _palette = _claims.get("smc_vocabulary") or {}
-    _spec_rule = _claims.get("smc_specificity") or {}
-    _op = _P(out_path)
-    ce_path = _op.with_name("stage2_code_evidence.csv")
-    CE_HEADER = ["run_id", "config_version",
-                 "sensing_in_executable", "sensing_in_recurrent",
-                 "has_loops", "has_conditionals", "has_procedures",
-                 "has_variables", "ceilings",
-                 "max_arm_alternations", "coordination_relations",
-                 "coordination_detail", "wait_release_total",
-                 "state_terminated_motion_fraction",
-                 "exercised_loops_fixed", "exercised_loops_state",
-                 "exercised_loops_forever", "exercised_conditionals",
-                 "max_nesting_depth", "state_controlled_termination",
-                 "state_gated_drivetrain", "computed_motion_params",
-                 "procedure_calls", "procedure_reused",
-                 "variable_sets", "variable_reads",
-                 "duplicated_sequences",
-                 "calibrated_param_matches", "motion_literal_count",
-                 # SMC lower-scale restructure (2026-09-09): ONE ordinal
-                 # indicator + its vocabulary diagnostics (ingredients,
-                 # never separate scoring variables) + the route-A
-                 # contamination annotation.
-                 "fixed_motion_specificity",
-                 "distinct_drive_clusters", "distinct_turn_clusters",
-                 "canonical_prop", "fine_value_count",
-                 "canonical_ambiguous_matches",
-                 # OI-33 ruling (2026-09-10): executed state-gating is
-                 # the SMC-2 scoring variant; the sensor-field list is
-                 # the mis-wired-sensor diagnostic.
-                 "state_gated_drivetrain_executed", "gated_sensor_fields"]
-    ce_fh = open(ce_path, "w", newline="")
-    ce_w = csv.writer(ce_fh)
-    ce_w.writerow(CE_HEADER)
+    # never require re-simulating. One row per run, built by the online
+    # rubric's _code_row so the two producers cannot drift.
+    from pathlib import Path
+    from .rubric_online import _CE_HEADER, _code_row
+    ce_path = Path(out_path).with_name("stage2_code_evidence.csv")
     n = 0
-    with open(out_path, "w", newline="") as fh:
+    with open(out_path, "w", newline="") as fh, open(ce_path, "w", newline="") as ce_fh:
         w = csv.writer(fh)
         w.writerow(header)
+        ce_w = csv.DictWriter(ce_fh, fieldnames=_CE_HEADER)
+        ce_w.writeheader()
         for r in runs:
             p = r.playground_params or {}
             _b, _imp = budget_for(r, sess_med, glob_med)
-            prof = _profile(r.workspace_xml or "", r.run_id, p,
+            prof = _profile(r.workspace_xml or "", r.run_id, p, playground,
                             stack_precedence=prec.get(r.run_id),
                             run_duration_s=_b, duration_imputed=_imp)
             row = {
@@ -147,39 +108,12 @@ def sweep(out_path: str, playground: str = "castle_crashers") -> dict:
             sim = getattr(prof, "full_sim", None)
             program = getattr(prof, "parsed_program", None)
             if sim is not None and program is not None:
-                ce = code_evidence(program, sim)
-                ce_w.writerow([
-                    r.run_id, prof.config_version,
-                    ce.sensing_in_executable, ce.sensing_in_recurrent,
-                    ce.has_loops, ce.has_conditionals, ce.has_procedures,
-                    ce.has_variables,
-                    ";".join(f"{k}:{v}" for k, v in sorted(ce.ceilings.items())),
-                    ce.max_arm_alternations,
-                    ce.construct_coordination_relations,
-                    "|".join(ce.coordination_detail),
-                    sum(ce.wait_release_counts.values()),
-                    ("" if ce.state_terminated_motion_fraction is None
-                     else round(ce.state_terminated_motion_fraction, 3)),
-                    ce.exercised_loops_fixed, ce.exercised_loops_state,
-                    ce.exercised_loops_forever, ce.exercised_conditional_count,
-                    ce.max_nesting_depth, ce.state_controlled_termination,
-                    ce.state_gated_drivetrain_count,
-                    ce.computed_motion_param_count,
-                    ce.procedure_metrics.get("calls", 0),
-                    ce.procedure_metrics.get("reused", 0),
-                    ce.variable_metrics.get("sets", 0),
-                    ce.variable_metrics.get("reads", 0),
-                    ce.duplicated_sequence_count,
-                    *calibration_audit(program, _geo, _tol),
-                    *_smc_lower_columns(program, _geo, _tol,
-                                        _palette, _spec_rule),
-                    ce.state_gated_drivetrain_executed,
-                    ";".join(ce.gated_sensor_fields)])
+                prod, _ = _code_row(program, sim, prof.config_version, playground, None)
+                ce_w.writerow({**prod, "run_id": r.run_id})
             n += 1
             if n % 500 == 0:
                 print(f"  {n}/{len(runs)}")
                 ce_fh.flush()
-    ce_fh.close()
     return {"runs": n, "validation_307": len(validation)}
 
 

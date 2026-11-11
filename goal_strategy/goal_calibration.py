@@ -51,22 +51,30 @@ def calibration_table(data_dir: str | None = None):
     d = Path(data_dir) if data_dir else data_path("ccp_run_dataset")
 
     # --- battery predictors, per run (identical for identical programs) ---
+    # A relative scenario runs once per sensing construct; its value is the
+    # mean over the constructs that measured it — the same pooling the
+    # served rollup applies (battery_rollup._family_island_means), so the
+    # model is trained on the feature it is scored with.
     batt: dict[str, dict] = {}
+    values: dict[tuple, list] = {}
     for r in _read(d / "stage3_battery.csv"):
         if r["eligible"] != "True" or r["scenario"].startswith("__"):
             continue
         row = batt.setdefault(r["run_id"], {})
         key = f"{r['scenario']}__{r['check']}"
+        seen = values.setdefault((r["run_id"], key), [])
         if r["abstain_reason"]:
-            row[key] = float("nan")
             row[f"{r['scenario']}__abstain"] = r["abstain_reason"]
             continue
         if r["status"] == "measured":
-            row[key] = float(r["value"]) if r["value"] != "" else float("nan")
-        else:
-            row[key] = _STATUS_SCORE.get(r["status"], float("nan"))
+            if r["value"] != "":
+                seen.append(float(r["value"]))
+        elif r["status"] in _STATUS_SCORE:
+            seen.append(_STATUS_SCORE[r["status"]])
         if r["capped"] == "True":
             row[f"{r['scenario']}__capped"] = True
+    for (rid, key), vals in values.items():
+        batt[rid][key] = sum(vals) / len(vals) if vals else float("nan")
 
     # --- targets ---
     rungs = {r["run_id"]: r for r in _read(d / "stage2_rungs.csv")}

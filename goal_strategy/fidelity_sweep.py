@@ -49,25 +49,16 @@ from collections import defaultdict
 from .ccp_runs import load_ccp_runs
 
 
-def _trajectory_distance(sim, gx, gy):
-    from .indicators import _polyline_min_distance
-    pts = [(sim.origin_x, sim.origin_y)] + [(p.x, p.y) for p in sim.path]
-    return _polyline_min_distance(pts, float(gx), float(gy))
-
-
 def sweep(out_csv: str, scheduler: str | None = None, playground="castle_crashers", configs_dir=None) -> dict:
-    from goal_strategy.detector.parsing.parse_blocks import parse_workspace
-    from goal_strategy.detector.simulation.simulate_path import simulate_path
-    from .config import load_configs
-    from .profile import _profile
-
-    cfg = load_configs(playground, configs_dir)
+    from .ccp_runs import budget_for, duration_budgets
     from .execution import prepare_execution
+    from .profile import _profile
     from .serialize import PIPELINE_VERSION
     all_runs = load_ccp_runs()
-    # OI-7 lockout (2026-08-25): precedence recovered over WHOLE sessions
-    # (non-telemetry snapshots included — they carry creation evidence)
-    from .ccp_runs import stack_precedence_map
+    # OI-28 (2026-08-28): the wall-clock budget is the run's OBSERVED
+    # duration (session median where missing, flagged duration_imputed) —
+    # the same execution model rung_sweep profiles with.
+    session_median, global_median = duration_budgets(all_runs)
     # OI-7 PAUSED (2026-08-25, reviewer parallel-execution investigation +
     # arbitration adjudication: sequential-sum beats every exclusive-owner
     # policy against GPS — see docs/archive/PARALLEL_EXECUTION.md). Machinery stays;
@@ -91,8 +82,10 @@ def sweep(out_csv: str, scheduler: str | None = None, playground="castle_crasher
                     "flags", "playground", "config_version", "pipeline_version"])
         for i, r in enumerate(runs):
             p = r.playground_params
+            budget, imputed = budget_for(r, session_median, global_median)
             execution = prepare_execution(r.workspace_xml, r.run_id, p, playground,
-                                          configs_dir=configs_dir, scheduler=scheduler)
+                                          configs_dir=configs_dir, scheduler=scheduler,
+                                          run_duration_s=budget, duration_imputed=imputed)
             prof = _profile(r.workspace_xml, r.run_id, p, playground, _execution=execution)
             flags = sorted({f for g in prof.goals for ind in g.intent + g.attainment for f in ind.flags})
             traj = prof.gps_to_trajectory_mm
