@@ -1,4 +1,6 @@
 """Run scoring counts typed-in values and only the code that runs."""
+import xml.etree.ElementTree as ET
+
 import pytest
 
 from learner_models.distance import clear_cache
@@ -157,3 +159,116 @@ def test_live_batch_parity_and_playground_reset():
         stream.push(ev)
     assert stream.runs == compute_run_edit_distances(es)["runs"]
     assert [r["edit_distance"] for r in stream.runs] == [None, 1, None]
+
+
+# ---------------------------------------------------------------------------
+# Every kind of edit a student can make, on one realistic program, and what it
+# should score. 0 means the robot does exactly what it did before.
+# ---------------------------------------------------------------------------
+def _drive(amount="100", direction="fwd", bid="d", extra=""):
+    return (f'<block type="pg_drivetrain_drive_for" id="{bid}"{extra}>'
+            f'<field name="DIRECTION">{direction}</field>'
+            f'<value name="DISTANCE"><shadow type="math_number" id="n{bid}">'
+            f'<field name="NUM">{amount}</field></shadow></value>')
+
+
+_TURN = ('<block type="pg_drivetrain_turn_for" id="t"><field name="TURNDIRECTION">right</field>'
+         '<value name="ANGLE"><shadow type="math_number" id="nt"><field name="NUM">90</field>'
+         '</shadow></value></block>')
+_PEN = ('<block type="pg_looks_set_pen_color" id="p"><value name="COLOR">'
+        '<shadow type="pg_looks_color_menu" id="pm"><field name="COLOR">black</field></shadow>'
+        '</value></block>')
+
+
+def program(drive=None, after=_TURN, hat_type="pg_events_when_started", hat_extra=' x="10" y="10"',
+            tops="", head='<variables><variable id="v1">count</variable></variables>', ns=True):
+    drive = drive if drive is not None else _drive()
+    body = f'{drive}<next>{after}</next></block>' if after else f"{drive}</block>"
+    xmlns = f" {NS}" if ns else ""
+    return (f'<xml{xmlns}>{head}<block type="{hat_type}" id="s"{hat_extra}><next>{body}</next>'
+            f'</block>{tops}</xml>')
+
+
+BASE = program()
+CALL = '<block type="procedures_call" id="c"><mutation proccode="{}"/></block>'
+
+
+def _definition(name, body):
+    return (f'<block type="procedures_definition" id="def{name}"><statement name="custom_block">'
+            f'<shadow type="procedures_prototype" id="pp{name}"><mutation proccode="{name}"/>'
+            f'</shadow></statement><next>{body}</next></block>')
+
+
+SAME = {
+    "move a stack on the canvas": program(hat_extra=' x="300" y="45"'),
+    "collapse a block": program(_drive(extra=' collapsed="true"')),
+    "inline inputs": program(_drive(extra=' inline="true"')),
+    "lock a block": program(_drive(extra=' deletable="false" movable="false" editable="false"')),
+    "every block gets a new id": BASE.replace('id="', 'id="copy-'),
+    "add a block comment": BASE.replace("</field>", '</field><comment pinned="false" h="80" '
+                                        'w="160">why</comment>', 1),
+    "add a workspace comment": program(tops='<comment x="1" y="1" h="80" w="160">hi</comment>'),
+    "add a comment block": program(after=f'<block type="{"aim_other_comment"}" id="cm">'
+                                         f'<field name="COMMENT">todo</field><next>{_TURN}</next>'
+                                         '</block>'),
+    "declare an unused variable": program(head='<variables><variable id="v2">x</variable></variables>'),
+    "whitespace around a value": program(_drive(" 100 ")),
+    "no xml namespace": program(ns=False),
+    "empty next connection": program(after=_TURN.replace("</block>", "<next></next></block>")),
+    "add an orphan block": program(tops=_PEN),
+    "add an uncalled My Block": program(tops=_definition("go", _PEN)),
+    "edit a value hidden behind a sensor": None,  # filled in below
+}
+_COVERED = ('<block type="pg_drivetrain_drive_for" id="d"><field name="DIRECTION">fwd</field>'
+            '<value name="DISTANCE"><shadow type="math_number" id="nd"><field name="NUM">{}</field>'
+            '</shadow><block type="pg_sensing_distance_distance" id="r"/></value>')
+SAME["edit a value hidden behind a sensor"] = (program(_COVERED.format(1)), program(_COVERED.format(2)))
+
+
+@pytest.mark.parametrize("name", sorted(SAME))
+def test_edits_that_change_nothing_that_runs_score_0(name):
+    case = SAME[name]
+    before, after = case if isinstance(case, tuple) else (BASE, case)
+    ET.fromstring(before), ET.fromstring(after)  # a broken fixture would score 0 too
+    assert score(before, after) == 0
+
+
+CHANGED = {
+    "edit a number": (BASE, program(_drive("150")), 1),
+    "pick another dropdown option": (BASE, program(_drive(direction="rev")), 1),
+    "pick another menu shadow option": (program(after=_PEN), program(after=_PEN.replace("black", "red")), 1),
+    "insert a block": (program(after=""), BASE, 1),
+    "delete a block": (BASE, program(after=""), 1),
+    "swap a block for another type": (BASE, program(after=_TURN.replace("turn_for", "turn")), 1),
+    "disable a block": (BASE, program(after=_TURN.replace('id="t"', 'id="t" disabled="true"')), 1),
+    "enable a block": (program(after=_TURN.replace('id="t"', 'id="t" disabled="true"')), BASE, 1),
+    "change the hat": (BASE, program(hat_type="pg_events_when_bumper"), 1),
+    "change a value inside a nested shadow": (
+        program(after=_PEN.replace('black</field>', 'black</field><value name="ALPHA"><shadow '
+                                   'type="math_number" id="a"><field name="NUM">5</field></shadow>'
+                                   '</value>')),
+        program(after=_PEN.replace('black</field>', 'black</field><value name="ALPHA"><shadow '
+                                   'type="math_number" id="a"><field name="NUM">9</field></shadow>'
+                                   '</value>')), 1),
+    "edit Switch Python": (program(after='<block type="pg_mixed_multiline_command" id="m">'
+                                         '<field name="CODE">drivetrain.drive(FORWARD)</field></block>'),
+                           program(after='<block type="pg_mixed_multiline_command" id="m">'
+                                         '<field name="CODE">drivetrain.drive(REVERSE)</field></block>'), 1),
+    "edit inside a called My Block": (program(after=CALL.format("go"), tops=_definition("go", _drive("1", bid="g") + "</block>")),
+                                      program(after=CALL.format("go"), tops=_definition("go", _drive("2", bid="g") + "</block>")), 1),
+    # Pinned on purpose: the slot's number goes away (1) and a sensor comes in (1).
+    "plug a sensor over a number": (BASE, program(_COVERED.format(100)), 2),
+    # Pinned on purpose: the call changes (1) and the definition that runs changes (1).
+    "call another My Block": (program(after=CALL.format("a"), tops=_definition("a", _PEN) + _definition("b", _PEN)),
+                              program(after=CALL.format("b"), tops=_definition("a", _PEN) + _definition("b", _PEN)), 2),
+    "delete the hat": (BASE, program(hat_type="pg_drivetrain_drive_for"), 3),
+    "disable the hat": (BASE, program(hat_extra=' disabled="true"'), 3),
+}
+
+
+@pytest.mark.parametrize("name", sorted(CHANGED))
+def test_edits_that_change_what_runs(name):
+    before, after, want = CHANGED[name]
+    ET.fromstring(before), ET.fromstring(after)
+    assert score(before, after) == want
+    assert score(after, before) == want  # undoing an edit costs the same

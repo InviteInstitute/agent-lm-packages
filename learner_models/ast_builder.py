@@ -45,9 +45,7 @@ def _get_block_node_info(block_elem):
 def _find_child_blocks(container_elem, allow_shadow=False):
     out = []
     for child in container_elem:
-        if child.tag == "block":
-            out.append(child)
-        elif allow_shadow and child.tag == "shadow":
+        if child.tag == "block" or (allow_shadow and child.tag == "shadow"):
             out.append(child)
     return out
 

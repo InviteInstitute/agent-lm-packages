@@ -2,9 +2,14 @@
 must not hit the recursion limit, the per-run distance stream must match the batch
 call, and nothing held in memory grows without bound."""
 import time
+from itertools import pairwise
 
-import learner_models.distance as distance
-from learner_models import RunDistanceStream, compute_run_edit_distances, xml_to_block_ast
+from learner_models import (
+    RunDistanceStream,
+    compute_run_edit_distances,
+    distance,
+    xml_to_block_ast,
+)
 from learner_models.constants import MAX_DIFF_BLOCKS
 from log_parser_delta_engine import smart_delta_engine
 
@@ -97,7 +102,7 @@ def test_distance_cache_is_bounded(monkeypatch):
     distance.clear_cache()
     monkeypatch.setattr(distance, "_CACHE_MAX", 3)
     xmls = [_straight(n) for n in range(2, 9)]
-    for a, b in zip(xmls, xmls[1:]):
+    for a, b in pairwise(xmls):
         distance.cached_edit_distance(a, b, xml_to_block_ast(a), xml_to_block_ast(b))
     assert len(distance._distance_cache) == 3
     distance.clear_cache()
@@ -120,7 +125,10 @@ def test_delta_engine_skips_unchanged_workspaces(monkeypatch):
 
 def _random_stream(rng, n):
     from learner_models.constants import (
-        CODE_EVENTS, POST_RUN_PAUSE_TRANSPARENT_TYPES, RESET_EVENTS, SOFT_EVENT_TYPES,
+        CODE_EVENTS,
+        POST_RUN_PAUSE_TRANSPARENT_TYPES,
+        RESET_EVENTS,
+        SOFT_EVENT_TYPES,
     )
     types = (sorted(CODE_EVENTS) + ["runProject"] * 3 + ["projectEnd"] * 3 + sorted(RESET_EVENTS)
              + sorted(SOFT_EVENT_TYPES) + sorted(POST_RUN_PAUSE_TRANSPARENT_TYPES)
@@ -134,6 +142,7 @@ def _random_stream(rng, n):
 
 def test_segmenter_matches_segment_session_after_every_push():
     import random
+
     from learner_models import SessionSegmenter, segment_session
     rng = random.Random(7)
     for _ in range(300):
@@ -146,6 +155,7 @@ def test_segmenter_matches_segment_session_after_every_push():
 
 def test_segmenter_forget_before_keeps_the_recent_window():
     import random
+
     from learner_models import SessionSegmenter, segment_session
     events = _random_stream(random.Random(3), 400)
     seg = SessionSegmenter()

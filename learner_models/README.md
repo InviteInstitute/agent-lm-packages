@@ -67,21 +67,28 @@ only when it actually computes a distance, so identical re-runs and cached pairs
 - APTED is roughly cubic. The package does not compare a pair if either program has more than
   `MAX_DIFF_BLOCKS` (600) blocks. The `edit_distance` of that pair is `None`, like the first run
   after a playground switch. Real runs reach a maximum near 180 blocks.
-- Run scoring keeps typed-in values. The value in a shadow (a number, some text, a
-  dropdown default) is copied onto the block that owns the slot, so changing drive
-  distance 100 to 150 scores 1. A shadow hidden behind a connected block is skipped,
-  and an edit to a real literal block still costs 1, not 2.
-- Run scoring counts only live code, using the same rules as the renderers
-  (`log_parser_delta_engine/liveness.py`). That is every stack under an enabled hat
-  (when started, when broadcasted, bumper, timer, optical) plus every My Block
-  definition live code calls. Detached blocks, uncalled definitions and disabled hat
-  stacks do not affect the distance or the 600-block limit. No live stack means an
-  empty scoring tree. A disabled block inside a live stack is dropped with what is
-  inside it, so disabling a block scores like deleting it.
+- Run scoring compares only what runs, so a score of 0 means the robot does exactly
+  what it did on the previous run. `test_scoring_policy.py` lists every kind of edit
+  with the score it gets.
+- Live code uses the same rules as the renderers (`log_parser_delta_engine/liveness.py`).
+  That is every stack under an enabled hat (when started, when broadcasted, bumper,
+  timer, optical) plus every My Block definition live code calls. Detached blocks,
+  uncalled definitions and disabled hat stacks do not affect the distance or the
+  600-block limit. No live stack means an empty scoring tree.
+- A disabled block or a comment block inside a live stack is dropped with what is
+  inside it, and the block after it moves up. Disabling a block scores like deleting
+  it, and adding or editing a comment block scores 0.
+- Typed-in values count. The value in a shadow (a number, some text, a dropdown
+  default, and any shadow inside it) is copied onto the block that owns the slot, so
+  changing drive distance 100 to 150 scores 1 and inserting a drive block scores 1.
+  A shadow hidden behind a connected block is skipped, and an edit to a real literal
+  block still costs 1, not 2. Plugging a sensor over a number scores 2 (the number
+  goes, the sensor comes).
 - Which My Block a call runs counts, so swapping two calls is no longer 0.
-- Attaching or detaching a stack now costs every block in it, since that code
-  starts or stops running. Snapping a 13-block stack under a hat is enough for
-  Explorer.
+- Ids, positions, collapsed and inline state, block and workspace comments, variable
+  declarations and empty connections never count.
+- Attaching or detaching a stack costs every block in it, since that code starts or
+  stops running. Snapping a 13-block stack under a hat is enough for Explorer.
 - The general `xml_to_block_ast` parser is unchanged. The batch and live run APIs
   both use `scoring_ast`. Trigger thresholds are unchanged.
 - Existing computed scores and downstream triggers must be recomputed to adopt

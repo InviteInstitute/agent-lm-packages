@@ -11,6 +11,7 @@ import csv
 import json
 import math
 import random
+import re
 import time
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -19,18 +20,26 @@ import pytest
 
 from goal_strategy import GoalProfileStream, goal_profile, goal_profiles_from_events
 from learner_models import (
-    RunDistanceStream, SessionSegmenter, compute_run_edit_distances,
-    detect_run_triggers_by_playground, segment_session, xml_to_block_ast,
+    RunDistanceStream,
+    SessionSegmenter,
+    compute_run_edit_distances,
+    detect_run_triggers_by_playground,
+    segment_session,
+    xml_to_block_ast,
 )
-from learner_models.distance import edit_distance_for, xml_digest
+from learner_models.distance import clear_cache, edit_distance_for, xml_digest
+from learner_models.scoring_ast import scoring_ast
 from log_parser_delta_engine import (
-    generate_compact_prompt, generate_compact_prompt_from_content,
-    generate_readable_lines, generate_readable_text, smart_delta_engine,
+    generate_compact_prompt,
+    generate_compact_prompt_from_content,
+    generate_readable_lines,
+    generate_readable_text,
+    smart_delta_engine,
 )
 
 NS = 'xmlns="https://developers.google.com/blockly/xml"'
-ALL_CHANNELS = dict(include_timeline=True, include_battery=True, include_rubric=True,
-                    include_rollup=True)
+ALL_CHANNELS = {"include_timeline": True, "include_battery": True, "include_rubric": True,
+                "include_rollup": True}
 STATUSES = {"profiled", "invalid_input", "unsupported_playground"}
 
 
@@ -231,6 +240,33 @@ def test_random_programs_through_every_entry_point(seed):
 @pytest.mark.parametrize("seed", range(3))
 def test_random_programs_with_every_channel(seed):
     _check_goal_result(goal_profile(_Program(1000 + seed).xml(), f"random/{seed}", **ALL_CHANNELS))
+
+
+def _score(a, b):
+    clear_cache()
+    events = [{"event_type": "runProject", "content": {"project": {"workspace": x}}} for x in (a, b)]
+    return compute_run_edit_distances(events)["runs"][1]["edit_distance"]
+
+
+def _cosmetic(xml, seed):
+    """The same program as Blockly saves it after edits that change nothing that
+    runs: every block gets a new id, a position, a collapsed state and a comment,
+    and a detached stack is added."""
+    xml = re.sub(r'id="([^"]*)"', r'id="copy-\1"', xml)
+    xml = re.sub(r"(<block [^>]*>)", r'\1<comment pinned="false">note</comment>', xml)
+    xml = xml.replace("<block ", '<block x="5" y="7" collapsed="true" ')
+    return xml.replace("</xml>", _Program(500 + seed).sequence(1, [], 3) + "</xml>")
+
+
+@pytest.mark.parametrize("seed", range(40))
+def test_random_programs_score_like_what_runs(seed):
+    xml, other = _Program(seed).xml(), _Program(seed + 1).xml()
+    ast = scoring_ast(xml)
+    targets = [e["target"] for e in ast["edges"]]
+    assert len(targets) == len(set(targets)) and set(targets) | set(ast["roots"]) == set(ast["nodes"])
+    assert _score(xml, xml) == 0
+    assert _score(xml, _cosmetic(xml, seed)) == 0
+    assert _score(xml, other) == _score(other, xml)
 
 
 # ---------------------------------------------------------------------------
