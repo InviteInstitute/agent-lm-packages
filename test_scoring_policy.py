@@ -105,6 +105,39 @@ def test_called_my_block_runs_and_uncalled_does_not():
     assert score(my_block(drive(1), called=False), my_block(drive(2), called=False)) == 0
 
 
+def test_disabling_a_block_scores_like_deleting_it():
+    tail = drive(2, bid="d2")
+    on = ws(hat(drive(1).replace("</block>", f"<next>{tail}</next></block>", 1)))
+    off = on.replace('id="d"', 'id="d" disabled="true"', 1)
+    assert score(on, off) == score(on, ws(hat(tail))) == 1
+
+
+def test_edits_inside_a_disabled_block_do_not_count():
+    def loop(v):
+        body = drive(v)
+        return ws(hat(f'<block type="pg_control_repeat" id="r" disabled="true">'
+                      f'<statement name="DO">{body}</statement></block>'))
+    assert score(loop(1), loop(2)) == 0
+
+    def covered(v):  # a disabled block in a slot falls back to the shadow under it
+        return ws(hat(drive(5, inside=f'<block type="math_number" id="m" disabled="true">'
+                                      f'<field name="NUM">{v}</field></block>')))
+    assert score(covered(1), covered(2)) == 0
+
+
+def test_which_my_block_is_called_counts():
+    def two(first, second):
+        calls = (f'<block type="procedures_call" id="c1"><mutation proccode="{first}"/><next>'
+                 f'<block type="procedures_call" id="c2"><mutation proccode="{second}"/>'
+                 '</block></next></block>')
+        proto = '<statement name="custom_block"><shadow type="procedures_prototype" id="p{0}">' \
+                '<mutation proccode="{0}"/></shadow></statement>'
+        defs = "".join(f'<block type="procedures_definition" id="{p}">{proto.format(p)}'
+                       f'<next>{drive(p, bid="d" + p)}</next></block>' for p in "ab")
+        return ws(hat(calls), defs)
+    assert score(two("a", "b"), two("b", "a")) == 2
+
+
 def test_orphans_do_not_hit_size_guard():
     orphans = "".join(f'<block type="turn" id="o{i}"/>' for i in range(601))
     assert score(ws(hat(drive(100)), orphans), ws(hat(drive(150)), orphans)) == 1

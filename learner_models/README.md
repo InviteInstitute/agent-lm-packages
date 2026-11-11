@@ -76,7 +76,12 @@ only when it actually computes a distance, so identical re-runs and cached pairs
   (when started, when broadcasted, bumper, timer, optical) plus every My Block
   definition live code calls. Detached blocks, uncalled definitions and disabled hat
   stacks do not affect the distance or the 600-block limit. No live stack means an
-  empty scoring tree.
+  empty scoring tree. A disabled block inside a live stack is dropped with what is
+  inside it, so disabling a block scores like deleting it.
+- Which My Block a call runs counts, so swapping two calls is no longer 0.
+- Attaching or detaching a stack now costs every block in it, since that code
+  starts or stops running. Snapping a 13-block stack under a hat is enough for
+  Explorer.
 - The general `xml_to_block_ast` parser is unchanged. The batch and live run APIs
   both use `scoring_ast`. Trigger thresholds are unchanged.
 - Existing computed scores and downstream triggers must be recomputed to adopt
