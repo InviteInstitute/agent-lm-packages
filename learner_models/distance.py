@@ -226,9 +226,8 @@ def compute_edit_distance(ast_prev, ast_curr):
     """The actual APTED distance between two run ASTs, rounded to a whole number
     under the edge-aware cost model. 0 means the two are identical.
 
-    Identical scored trees return 0 without running APTED, including workspaces
-    that differ only in detached blocks. Literal parameter edits are retained
-    by the run scoring tree builder."""
+    Identical trees return 0 without running APTED. Run scoring hits this for
+    workspaces that differ only in detached code (see scoring_ast)."""
     t1 = ast_to_apted_tree(ast_prev)
     t2 = ast_to_apted_tree(ast_curr)
     if _signature(t1) == _signature(t2):

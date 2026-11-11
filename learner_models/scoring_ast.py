@@ -1,82 +1,43 @@
-"""Build scoring trees with literal parameters and only when-started stacks.
+"""The tree that run scoring diffs. It differs from xml_to_block_ast in two ways.
 
-The general workspace parser remains unchanged for rendering and other callers.
-This root policy is structural, not a procedure-call graph analysis.
+  * Only live code counts. A top-level stack is kept when log_parser_delta_engine's
+    liveness rules say it runs (an enabled hat, or a My Block definition that live
+    code calls), so the renderers and the scorer agree on what is an orphan.
+  * Typed-in values count. A shadow is not a node, so the value it holds (a number,
+    some text, a dropdown default) is copied onto the block that owns the slot, as
+    a field named SLOT.FIELD. Changing drive 100 to 150 is one field change. A shadow
+    hidden behind a connected block is not what runs, so it is skipped. A real
+    literal block (one dragged into the slot) is already a node with its own field,
+    so it is not copied up and an edit to it still costs 1, not 2.
 """
 import xml.etree.ElementTree as ET
-from .ast_builder import xml_to_block_ast
 
-def xml_to_parameter_ast(xml: str) -> dict:
-    """Preserve reference NUM/TEXT inputs without adding shadow block costs.
+from log_parser_delta_engine.liveness import split_stacks, strip_namespaces, value_input
+from .ast_builder import root_to_block_ast
 
-    The literal extraction intentionally matches the supplied notebook, including
-    its treatment of real literal blocks. Structural ordering and generated IDs
-    follow the pinned iterative parser. This is parser parity, not a change to
-    upstream's all-roots versus executable-only distance policy.
-    """
-    result = xml_to_block_ast(xml, keep_shadow=False)
-    if not result['nodes']:
-        return result
-    root = ET.fromstring(xml)
-    for element in root.iter():
-        element.tag = element.tag.split('}')[-1]
-    literal_types = {'math_number', 'math_whole_number', 'math_positive_number',
-                     'math_number_string', 'text'}
-    pending = list(reversed([e for e in root if e.tag == 'block']))
-    # Visit only registered real blocks, in exactly the upstream parser's order.
-    # zip against ordered AST IDs also handles XML without explicit block IDs.
-    for node_id in result['nodes']:
-        if not pending:
-            raise ValueError('Reference literal extraction differs from structural AST traversal')
-        block = pending.pop()
-        for value in block:
-            if value.tag != 'value':
+
+def scoring_ast(xml):
+    """{nodes, edges, roots} for the live code in a workspace XML. Blank, malformed
+    or hat-less input gives an empty tree."""
+    try:
+        root = strip_namespaces(ET.fromstring(xml)) if xml else None
+    except (ET.ParseError, ValueError):  # ValueError: lone surrogates
+        root = None
+    if root is None:
+        return {"nodes": {}, "edges": [], "roots": []}
+
+    live = {id(el) for el in split_stacks(root)[0]}
+    for el in list(root):
+        if id(el) not in live:
+            root.remove(el)
+
+    for block in list(root.iter("block")):
+        for value in block.findall("value"):
+            shadow = value_input(value)
+            if shadow is None or shadow.tag != "shadow":
                 continue
-            for child in value:
-                if child.tag not in {'shadow', 'block'} or child.get('type') not in literal_types:
-                    continue
-                fields = {f.get('name'): (f.text or '').strip() for f in child
-                          if f.tag == 'field' and f.get('name')}
-                name = value.get('name')
-                if 'NUM' in fields:
-                    result['nodes'][node_id]['fields'][name] = fields['NUM']
-                elif 'TEXT' in fields:
-                    result['nodes'][node_id]['fields'][name] = fields['TEXT']
-                elif fields:
-                    result['nodes'][node_id]['fields'][name] = fields
-        children = [child for connection in block if connection.tag in {'value', 'statement', 'next'}
-                    for child in connection if child.tag == 'block']
-        pending.extend(reversed(children))
-    if pending:
-        raise ValueError('Reference literal extraction left unregistered real blocks')
-    return result
-
-
-def executable_ast(ast: dict) -> dict:
-    """Keep only nodes reachable from pg_events_when_started roots.
-
-    Filter nodes and edges as well as roots, so detached blocks also do not count
-    toward the size guard. Multiple start stacks are included; with no start
-    root, the executable AST is empty. This matches the notebook's root policy.
-    """
-    roots = [node for node in ast['roots']
-             if ast['nodes'][node]['type'] == 'pg_events_when_started']
-    children = {}
-    for edge in ast['edges']:
-        children.setdefault(edge['source'], []).append(edge['target'])
-    reachable = set()
-    pending = list(roots)
-    while pending:
-        node = pending.pop()
-        if node in reachable:
-            continue
-        reachable.add(node)
-        pending.extend(children.get(node, []))
-    return dict(nodes={k: v for k, v in ast['nodes'].items() if k in reachable},
-                edges=[e for e in ast['edges'] if e['source'] in reachable and e['target'] in reachable],
-                roots=roots)
-
-
-def scoring_ast(xml: str) -> dict:
-    """Return the executable, parameter-preserving scoring representation."""
-    return executable_ast(xml_to_parameter_ast(xml))
+            for field in shadow.findall("field"):
+                if field.get("name"):
+                    name = f"{value.get('name')}.{field.get('name')}"
+                    ET.SubElement(block, "field", name=name).text = field.text
+    return root_to_block_ast(root)

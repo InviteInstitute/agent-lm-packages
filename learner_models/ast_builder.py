@@ -65,6 +65,12 @@ def xml_to_block_ast(xml_string, keep_shadow=False):
         root = _parse_xml_string(xml_string)
     except (ET.ParseError, ValueError):  # ValueError: lone surrogates
         return {"nodes": {}, "edges": [], "roots": []}
+    return root_to_block_ast(root, keep_shadow)
+
+
+def root_to_block_ast(root, keep_shadow=False):
+    """xml_to_block_ast for a workspace that is already parsed, with namespaces
+    stripped."""
     nodes, edges, roots = {}, [], []
 
     def register(block_elem):

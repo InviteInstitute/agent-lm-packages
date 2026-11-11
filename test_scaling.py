@@ -53,12 +53,12 @@ def test_distance_past_the_size_cap_is_not_compared():
 
 
 def test_identical_trees_skip_apted(monkeypatch):
-    # Changing only a number changes the XML but not the AST (shadows are left
-    # out), so the pair is 0 without running APTED at all.
+    # Adding a detached block changes the XML but not the scored tree (orphans
+    # are left out), so the pair is 0 without running APTED at all.
     distance.clear_cache()
     monkeypatch.setattr(distance, "APTED", None)
-    runs = compute_run_edit_distances([_run(_straight(50, 100), 1),
-                                       _run(_straight(50, 300), 2)])["runs"]
+    orphan = _straight(50).replace("</xml>", '<block type="pg_drivetrain_turn_for" id="o"/></xml>')
+    runs = compute_run_edit_distances([_run(_straight(50), 1), _run(orphan, 2)])["runs"]
     assert runs[1]["edit_distance"] == 0
 
 
@@ -75,13 +75,13 @@ def test_stream_matches_batch_and_parses_lazily(monkeypatch):
 
     parsed = []
     import learner_models.run_sequence as rs
-    original = rs.xml_to_block_ast
+    original = rs.scoring_ast
 
     def counting(xml):
         parsed.append(xml)
         return original(xml)
 
-    monkeypatch.setattr(rs, "xml_to_block_ast", counting)
+    monkeypatch.setattr(rs, "scoring_ast", counting)
     distance.clear_cache()
     stream = RunDistanceStream()
     out = [stream.push(ev) for ev in events]
