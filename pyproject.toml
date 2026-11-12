@@ -15,7 +15,7 @@ learner-models = ["apted>=1.0"]
 
 goal-strategy = ["pyyaml"]
 goal-strategy-analysis = ["pandas", "pyarrow"]
-dev = ["pytest", "build", "pandas", "pyarrow"]
+dev = ["pytest", "build", "pandas", "pyarrow", "zss"]
 
 [tool.setuptools]
 include-package-data = false

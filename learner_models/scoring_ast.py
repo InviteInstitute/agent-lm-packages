@@ -36,14 +36,16 @@ from log_parser_delta_engine.liveness import (
 
 from .ast_builder import root_to_block_ast
 
-COMMENT_BLOCK = "aim_other_comment"
+# Both comment blocks VEX writes into stacks (comment_multiline is in the starter
+# projects). They hold only text.
+COMMENT_BLOCKS = frozenset({"aim_other_comment", "comment_multiline"})
 
 
 def _drop_inert(root):
     """Remove each disabled or comment block and splice its next chain into its place."""
     parent = {child: el for el in root.iter() for child in el}
     inert = [b for b in root.iter("block") if b in parent
-             and (is_disabled(b) or b.get("type") == COMMENT_BLOCK)]
+             and (is_disabled(b) or b.get("type") in COMMENT_BLOCKS)]
     for block in inert:
         container = parent[block]
         after = next_block(block)

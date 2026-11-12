@@ -17,6 +17,8 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import pytest
+import zss
+from apted import APTED
 
 from goal_strategy import GoalProfileStream, goal_profile, goal_profiles_from_events
 from learner_models import (
@@ -24,6 +26,7 @@ from learner_models import (
     SessionSegmenter,
     compute_run_edit_distances,
     detect_run_triggers_by_playground,
+    distance,
     segment_session,
     xml_to_block_ast,
 )
@@ -267,6 +270,25 @@ def test_random_programs_score_like_what_runs(seed):
     assert _score(xml, xml) == 0
     assert _score(xml, _cosmetic(xml, seed)) == 0
     assert _score(xml, other) == _score(other, xml)
+
+
+@pytest.mark.parametrize("seed", range(30))
+def test_apted_is_exact_under_the_vex_costs(seed):
+    # The apted package is not exact for every cost model: it returned 153 for a
+    # pair whose distance is 152 when a rename could cost 2 (see VexConfig). Check
+    # it against Zhang-Shasha, a second exact algorithm, on whole random programs
+    # and on small edits of them.
+    trees = [distance.ast_to_apted_tree(scoring_ast(_Program(s).xml())) for s in (seed, seed + 1)]
+    small = scoring_ast(_cosmetic(_Program(seed).xml(), seed).replace('fwd', 'rev', 1)
+                        .replace('<field name="NUM">', '<field name="NUM">7', 1))
+    trees.append(distance.ast_to_apted_tree(small))
+    config = distance.VexConfig()
+    distance._ensure_recursion_headroom(max(distance._tree_depth(t) for t in trees))
+    for other in trees[1:]:
+        exact = zss.distance(trees[0], other, lambda n: n.children, config.insert, config.delete,
+                             config.rename)
+        assert APTED(trees[0], other, config).compute_edit_distance() == exact
+        assert APTED(other, trees[0], config).compute_edit_distance() == exact
 
 
 # ---------------------------------------------------------------------------

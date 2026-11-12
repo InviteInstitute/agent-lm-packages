@@ -30,32 +30,35 @@ Workspace rendering (compact + readable) lives in log_parser_delta_engine.
 
 Needs the `apted` package (see requirements.txt). Everything else is stdlib.
 """
-from .run_sequence import compute_run_edit_distances, RunDistanceStream
-from .triggers import (
-    detect_run_triggers, detect_run_triggers_by_playground,
-    is_inactive, detect_inactive_trigger, INACTIVE_RUN_INDEX,
-)
-from .episodes import segment_session, segment_episodes, SessionSegmenter
+from .ast_builder import extract_workspace_xml, xml_to_block_ast
 from .constants import boundary_kind
 from .distance import cached_edit_distance, clear_cache
-from .ast_builder import xml_to_block_ast, extract_workspace_xml
+from .episodes import SessionSegmenter, segment_episodes, segment_session
+from .run_sequence import RunDistanceStream, compute_run_edit_distances
 from .switches import detect_switches
+from .triggers import (
+    INACTIVE_RUN_INDEX,
+    detect_inactive_trigger,
+    detect_run_triggers,
+    detect_run_triggers_by_playground,
+    is_inactive,
+)
 
 __all__ = [
-    "compute_run_edit_distances",
-    "RunDistanceStream",
-    "detect_run_triggers",
-    "detect_run_triggers_by_playground",
-    "is_inactive",
-    "detect_inactive_trigger",
     "INACTIVE_RUN_INDEX",
-    "segment_session",
+    "RunDistanceStream",
     "SessionSegmenter",
-    "segment_episodes",
     "boundary_kind",
     "cached_edit_distance",
     "clear_cache",
-    "xml_to_block_ast",
-    "extract_workspace_xml",
+    "compute_run_edit_distances",
+    "detect_inactive_trigger",
+    "detect_run_triggers",
+    "detect_run_triggers_by_playground",
     "detect_switches",
+    "extract_workspace_xml",
+    "is_inactive",
+    "segment_episodes",
+    "segment_session",
+    "xml_to_block_ast",
 ]

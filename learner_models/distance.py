@@ -241,4 +241,4 @@ def compute_edit_distance(ast_prev, ast_curr):
     if _signature(t1) == _signature(t2):
         return 0
     _ensure_recursion_headroom(max(_tree_depth(t1), _tree_depth(t2)))
-    return int(round(APTED(t1, t2, VexConfig()).compute_edit_distance()))
+    return round(APTED(t1, t2, VexConfig()).compute_edit_distance())

@@ -89,7 +89,8 @@ def test_disabled_hat_does_not_run():
 
 
 @pytest.mark.parametrize("kind", ["pg_events_when_broadcasted", "pg_events_when_bumper",
-                                  "pg_events_when_timer"])
+                                  "pg_events_when_timer", "pg_events_optical_detect_object",
+                                  "pg_events_when_under_attack", "pg_events_when_level_up"])
 def test_other_hats_run(kind):
     def two(v):
         return ws(hat(drive()), hat(drive(v, bid="d2"), kind=kind, bid="h2"))
@@ -211,6 +212,9 @@ SAME = {
     "add a comment block": program(after=f'<block type="{"aim_other_comment"}" id="cm">'
                                          f'<field name="COMMENT">todo</field><next>{_TURN}</next>'
                                          '</block>'),
+    "add a multi-line comment block": program(after='<block type="comment_multiline" id="cm">'
+                                                    f'<field name="COMMENT">todo</field><next>{_TURN}</next>'
+                                                    '</block>'),
     "declare an unused variable": program(head='<variables><variable id="v2">x</variable></variables>'),
     "whitespace around a value": program(_drive(" 100 ")),
     "no xml namespace": program(ns=False),

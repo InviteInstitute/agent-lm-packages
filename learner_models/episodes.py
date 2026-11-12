@@ -16,16 +16,16 @@ segment_episodes output:
   end_ts, event_count, soft_indices}. start_idx is inclusive and end_idx is exclusive.
 """
 from .constants import (
-    boundary_kind,
-    SOFT_EVENT_TYPES,
-    PAUSE_THRESHOLD_S,
-    SHORT_PAUSE_MIN_S,
-    PAUSE_MAX_S,
-    POST_RUN_PAUSE_TRANSPARENT_TYPES,
     CODE_EVENTS,
-    RUN_START_EVENTS,
-    RUN_END_EVENTS,
+    PAUSE_MAX_S,
+    PAUSE_THRESHOLD_S,
+    POST_RUN_PAUSE_TRANSPARENT_TYPES,
     RESET_EVENTS,
+    RUN_END_EVENTS,
+    RUN_START_EVENTS,
+    SHORT_PAUSE_MIN_S,
+    SOFT_EVENT_TYPES,
+    boundary_kind,
 )
 
 
