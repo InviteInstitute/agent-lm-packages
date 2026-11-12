@@ -262,6 +262,18 @@ CHANGED = {
     "call another My Block": (program(after=CALL.format("a"), tops=_definition("a", _PEN) + _definition("b", _PEN)),
                               program(after=CALL.format("b"), tops=_definition("a", _PEN) + _definition("b", _PEN)), 2),
     "delete the hat": (BASE, program(hat_type="pg_drivetrain_drive_for"), 3),
+    "move a block into a loop": (
+        program(after='<block type="pg_control_forever" id="f"><next>' + _TURN + '</next></block>'),
+        program(after='<block type="pg_control_forever" id="f"><statement name="SUBSTACK">'
+                      + _TURN + '</statement></block>'), 1),
+    # Pinned on purpose: the loop comes in (1) and the block moves into it (1).
+    "wrap a block in a loop": (BASE, program(after='<block type="pg_control_forever" id="f">'
+                                                   '<statement name="SUBSTACK">' + _TURN
+                                                   + '</statement></block>'), 2),
+    "add a second stack": (BASE, program(tops='<block type="pg_events_when_bumper" id="b2">'
+                                              '<next>' + _PEN + '</next></block>'), 2),
+    "typed text that looks like another field": (
+        program(after=_PEN.replace("black", "x")), program(after=_PEN.replace("black", "x|B=2")), 1),
     "disable the hat": (BASE, program(hat_extra=' disabled="true"'), 3),
 }
 
