@@ -45,9 +45,7 @@ def _get_block_node_info(block_elem):
 def _find_child_blocks(container_elem, allow_shadow=False):
     out = []
     for child in container_elem:
-        if child.tag == "block":
-            out.append(child)
-        elif allow_shadow and child.tag == "shadow":
+        if child.tag == "block" or (allow_shadow and child.tag == "shadow"):
             out.append(child)
     return out
 
@@ -65,6 +63,12 @@ def xml_to_block_ast(xml_string, keep_shadow=False):
         root = _parse_xml_string(xml_string)
     except (ET.ParseError, ValueError):  # ValueError: lone surrogates
         return {"nodes": {}, "edges": [], "roots": []}
+    return root_to_block_ast(root, keep_shadow)
+
+
+def root_to_block_ast(root, keep_shadow=False):
+    """xml_to_block_ast for a workspace that is already parsed, with namespaces
+    stripped."""
     nodes, edges, roots = {}, [], []
 
     def register(block_elem):

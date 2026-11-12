@@ -114,3 +114,6 @@ Magnet (variant),magnet,pg_magnet_magnet,Alternate block name for magnet observe
 Logic > Variables (Blockly),set variable,variables_set,Standard Blockly block name for set variable — may appear in some VEX VR exports.,,variable,,handled
 Logic > Variables (Blockly),change variable,variables_change,Standard Blockly block name for change variable — may appear in some VEX VR exports.,,variable,,handled
 Logic > Variables (Blockly),change variable (math),math_change,Standard Blockly block name for math change — may appear in some VEX VR exports.,,variable,,handled
+Rover Rescue > Events,when under attack,pg_events_when_under_attack,Runs the attached stack of blocks when an enemy attacks the rover in Rover Rescue.,,event,,ignored
+Rover Rescue > Events,when level up,pg_events_when_level_up,Runs the attached stack of blocks when the rover levels up in Rover Rescue.,,event,,ignored
+Logic > Comments,comment,comment_multiline,A multi-line comment inside a stack. Does not affect how the project runs.,,other,COMMENT,ignored

@@ -67,9 +67,47 @@ only when it actually computes a distance, so identical re-runs and cached pairs
 - APTED is roughly cubic. The package does not compare a pair if either program has more than
   `MAX_DIFF_BLOCKS` (600) blocks. The `edit_distance` of that pair is `None`, like the first run
   after a playground switch. Real runs reach a maximum near 180 blocks.
-- Two runs with identical trees score 0 without APTED. For example, only a number changed, and
-  shadow literals are not in the AST.
-- The distance cache is an LRU of the most recent 50,000 XML pairs.
+- Run scoring compares only what runs, so a score of 0 means the robot does exactly
+  what it did on the previous run. `test_scoring_policy.py` lists every kind of edit
+  with the score it gets.
+- Live code uses the same rules as the renderers (`log_parser_delta_engine/liveness.py`).
+  That is every stack under an enabled hat (when started, when broadcasted, bumper,
+  timer, eye, and Rover Rescue's when under attack and when level up) plus every My
+  Block definition live code calls. Detached blocks,
+  uncalled definitions and disabled hat stacks do not affect the distance or the
+  600-block limit. No live stack means an empty scoring tree.
+- A disabled block or a comment block (`aim_other_comment`, `comment_multiline`) inside a live stack is dropped with what is
+  inside it, and the block after it moves up. Disabling a block scores like deleting
+  it, and adding or editing a comment block scores 0.
+- Typed-in values count. The value in a shadow (a number, some text, a dropdown
+  default, and any shadow inside it) is copied onto the block that owns the slot, so
+  changing drive distance 100 to 150 scores 1 and inserting a drive block scores 1.
+  A shadow hidden behind a connected block is skipped, and an edit to a real literal
+  block still costs 1, not 2. Plugging a sensor over a number scores 2 (the number
+  goes, the sensor comes).
+- Which My Block a call runs counts, so swapping two calls is no longer 0.
+- Ids, positions, collapsed and inline state, block and workspace comments, variable
+  declarations and empty connections never count.
+- The cost model (`distance.VexConfig`): inserting or deleting a block costs 1, and so
+  does changing one block into another. A block's connection to its parent (next,
+  a statement slot, a value slot) is part of the block, so moving a block into a
+  loop or to the other branch of an if costs 1, and wrapping a block in a loop costs
+  2 (the loop, and the move). A rename costs the largest change it covers, so moving
+  a block and changing its number is 1. The apted package is not exact when a rename
+  can cost more than an insert or delete, so `distance.py` refuses such constants,
+  and `test_robustness.py` checks apted against Zhang-Shasha.
+- Every tree hangs off one fixed workspace root, so adding a second stack costs its
+  blocks and nothing more.
+- Attaching or detaching a stack costs every block in it, since that code starts or
+  stops running. Snapping a 13-block stack under a hat is enough for Explorer.
+- The general `xml_to_block_ast` parser is unchanged. The batch and live run APIs
+  both use `scoring_ast`. Trigger thresholds are unchanged.
+- Existing computed scores and downstream triggers must be recomputed to adopt
+  this policy. Historical alerts are not rewritten.
+- Two runs with identical scored trees return 0 without APTED.
+- The distance cache is an LRU of the most recent 50,000 XML pairs, kept apart per AST
+  builder (`namespace` in `edit_distance_for`), so a distance computed from
+  `xml_to_block_ast` trees is never served to run scoring.
 
 ## Output shapes
 

@@ -18,8 +18,9 @@ Public API:
 """
 import json
 
-from .ast_builder import xml_to_block_ast, extract_workspace_xml
+from .ast_builder import extract_workspace_xml
 from .distance import edit_distance_for, xml_digest
+from .scoring_ast import scoring_ast
 
 
 def _content_of(ev):
@@ -62,8 +63,8 @@ class RunDistanceStream:
             dist = None
         else:
             prev_xml, prev_digest, prev_ast, _ = self._prev
-            dist = edit_distance_for(prev_xml, xml, prev_ast, ast,
-                                     prev_digest=prev_digest, curr_digest=digest)
+            dist = edit_distance_for(prev_xml, xml, prev_ast, ast, prev_digest=prev_digest,
+                                     curr_digest=digest, namespace="scoring_ast")
         run = {"index": i, "edit_distance": dist, "ts": ev.get("ts"), "playground": pg}
         self.runs.append(run)
         self._prev = (xml, digest, ast, pg)
@@ -79,7 +80,7 @@ class _LazyAst:
 
     def __call__(self):
         if self._ast is None:
-            self._ast = xml_to_block_ast(self._xml)
+            self._ast = scoring_ast(self._xml)
         return self._ast
 
 

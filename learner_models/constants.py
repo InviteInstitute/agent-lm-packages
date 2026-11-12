@@ -3,13 +3,11 @@ here, so there's one place to change them. If these numbers also live somewhere 
 that reads the same student data, keep both copies matching or the triggers won't line
 up between them."""
 
-# --- APTED edit costs ---
-# The edge nodes are synthetic connectors, so they are free to add or remove. That
-# way adding one real block scores 1 and not 2 (the block plus its connector).
+# --- APTED edit costs (see distance.VexConfig) ---
+# Whole numbers, so every distance is exact. A block's connection to its parent is
+# part of the block's node, so moving a block costs EDGE_CHANGE_COST.
 BLOCK_DELETE_COST = 1.0
 BLOCK_INSERT_COST = 1.0
-EDGE_DELETE_COST = 0.0
-EDGE_INSERT_COST = 0.0
 FIELD_CHANGE_COST = 1.0
 TYPE_CHANGE_COST = 1.0
 EDGE_CHANGE_COST = 1.0

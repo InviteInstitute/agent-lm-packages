@@ -31,6 +31,8 @@ HAT_BLOCK_TYPES = frozenset({
     "pg_events_when_bumper",
     "pg_events_when_timer",
     "pg_events_optical_detect_object",
+    "pg_events_when_under_attack",   # Rover Rescue
+    "pg_events_when_level_up",       # Rover Rescue
 })
 
 PROCEDURE_DEFINITION = "procedures_definition"

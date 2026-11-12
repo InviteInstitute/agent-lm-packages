@@ -11,13 +11,17 @@ import hashlib
 import sys
 import threading
 from collections import OrderedDict, defaultdict
+
 from apted import APTED, Config
 
 from .constants import (
-    BLOCK_DELETE_COST, BLOCK_INSERT_COST, EDGE_DELETE_COST, EDGE_INSERT_COST,
-    FIELD_CHANGE_COST, TYPE_CHANGE_COST, EDGE_CHANGE_COST, MAX_DIFF_BLOCKS,
+    BLOCK_DELETE_COST,
+    BLOCK_INSERT_COST,
+    EDGE_CHANGE_COST,
+    FIELD_CHANGE_COST,
+    MAX_DIFF_BLOCKS,
+    TYPE_CHANGE_COST,
 )
-
 
 # The distance between two XMLs never changes, so a computed pair never goes
 # stale. Keyed on the SHA1 digests of both workspace XMLs and bounded as an LRU,
@@ -42,17 +46,22 @@ def xml_digest(xml_string):
 
 
 def edit_distance_for(prev_xml, curr_xml, prev_ast, curr_ast,
-                      prev_digest=None, curr_digest=None):
+                      prev_digest=None, curr_digest=None, namespace="xml_to_block_ast"):
     """The memoized distance between two workspace XMLs. prev_ast and curr_ast may
     be the ASTs themselves or zero-argument callables that build them, so a caller
     can skip parsing entirely when the pair is identical or already cached.
     Digests from xml_digest may be passed to avoid rehashing.
 
+    The cache is keyed on the XMLs, so it is only right if the ASTs are always built
+    from them the same way. `namespace` names that way: pass a different one for
+    ASTs built by anything other than xml_to_block_ast (run scoring passes
+    "scoring_ast"), or a distance cached under one would be served for the other.
+
     Returns None when either program is bigger than MAX_DIFF_BLOCKS: the pair is
     not compared (see constants)."""
     if prev_xml == curr_xml:
         return 0
-    key = (prev_digest or xml_digest(prev_xml), curr_digest or xml_digest(curr_xml))
+    key = (namespace, prev_digest or xml_digest(prev_xml), curr_digest or xml_digest(curr_xml))
     with _cache_lock:
         cached = _distance_cache.get(key)
         if cached is not None:
@@ -78,36 +87,52 @@ def cached_edit_distance(prev_xml, curr_xml, prev_ast, curr_ast):
 
 
 class AptedNode:
-    def __init__(self, name, node_type=None, fields=None):
-        self.name = name
+    """One node of the tree APTED diffs. `name` is the node's whole identity, so two
+    nodes with equal names are the same node and renaming one into the other is free.
+
+    A block's name is (connection, label). connection is how it hangs off its parent:
+    ("next", None), ("statement", "SUBSTACK"), ("value", "AMOUNT"), or ("top", None)
+    for a stack under the workspace root. label is (block type, its sorted fields).
+    Keeping both as tuples, not joined strings, means no field value a student types
+    can make two different blocks look the same."""
+
+    __slots__ = ("children", "connection", "label", "name", "node_type")
+
+    def __init__(self, node_type, connection, label):
         self.node_type = node_type
-        self.fields = fields or {}
+        self.connection = connection
+        self.label = label
+        self.name = (connection, label)
         self.children = []
 
-    def add_child(self, node):
-        self.children.append(node)
+
+if max(EDGE_CHANGE_COST, FIELD_CHANGE_COST, TYPE_CHANGE_COST) > min(BLOCK_INSERT_COST,
+                                                                   BLOCK_DELETE_COST):
+    raise ValueError("a rename may not cost more than a block insert or delete (see VexConfig)")
+
+_WORKSPACE = "__workspace__"
+# A cost no real diff can reach (it is at most 2 * MAX_DIFF_BLOCKS edits of cost
+# <= 1), so the two workspace roots always map onto each other.
+_NEVER = 1e9
 
 
-def _make_node_label(node_info, include_fields=True, field_keys=None):
-    block_type = node_info.get("type", "unknown")
-    fields = dict(node_info.get("fields", {}))
-    if not include_fields:
-        return block_type
-    if field_keys is not None:
-        fields = {k: v for k, v in fields.items() if k in field_keys}
-    if not fields:
-        return block_type
-    field_str = "|".join(f"{k}={fields[k]}" for k in sorted(fields))
-    return f"{block_type}|{field_str}"
+def _label(info):
+    fields = info.get("fields") or {}
+    return (str(info.get("type", "unknown")),
+            tuple(sorted((str(k), str(v)) for k, v in fields.items())))
 
 
-def ast_to_apted_tree(ast_dict, include_fields=True, field_keys=None, include_edge_nodes=True):
-    """Turn an AST dict ({nodes, edges, roots}) into a tree of AptedNodes that APTED
-    can process. Children are ordered the same way every time (value, then statement,
-    then next, each in its recorded order) so the distance is deterministic. When
-    include_edge_nodes is on, an extra node is dropped in for every edge, which makes
-    the distance care about how blocks are wired together and not just which blocks
-    are present. If there's more than one root, they all hang under a fake ROOT."""
+def ast_to_apted_tree(ast_dict):
+    """Turn an AST dict ({nodes, edges, roots}) into the tree APTED diffs.
+
+    Every tree hangs off one workspace node, however many stacks there are (none
+    included), so adding a stack costs its blocks and nothing for a wrapper. A
+    block's connection is part of the block's own node rather than a node of its
+    own: a separate connector node would have to be free to add or remove (or
+    adding one block would cost 2), and a free node lets APTED move a block into a
+    loop, or from the if branch to the else branch, for nothing. Children are
+    ordered value, then statement, then next, each in recorded order, so the
+    distance is deterministic."""
     nodes = ast_dict.get("nodes", {})
     edges = ast_dict.get("edges", [])
     roots = ast_dict.get("roots", [])
@@ -115,76 +140,59 @@ def ast_to_apted_tree(ast_dict, include_fields=True, field_keys=None, include_ed
     children_map = defaultdict(list)
     for e in edges:
         children_map[e["source"]].append(e)
-
     edge_priority = {"value": 0, "statement": 1, "next": 2}
-
-    def edge_sort_key(e):
-        return (edge_priority.get(e.get("edge_type"), 9), e.get("order", 0))
-
     for pid in children_map:
-        children_map[pid] = sorted(children_map[pid], key=edge_sort_key)
+        children_map[pid].sort(key=lambda e: (edge_priority.get(e.get("edge_type"), 9),
+                                              e.get("order", 0)))
 
-    def build_subtree(root_id):
-        # Explicit stack instead of recursion: the tree is as deep as the
-        # program is long (each next block hangs under the previous one), and
-        # children are attached in the same order the recursive build used.
-        def make(node_id):
-            info = nodes[node_id]
-            label = _make_node_label(info, include_fields=include_fields, field_keys=field_keys)
-            return AptedNode(name=label, node_type=info.get("type"), fields=info.get("fields", {}))
-
-        top = make(root_id)
-        pending = [(root_id, top)]
-        while pending:
-            node_id, apted_node = pending.pop()
-            for e in children_map.get(node_id, []):
-                child = make(e["target"])
-                if include_edge_nodes:
-                    edge_label = (
-                        e["edge_type"] if e.get("slot") is None
-                        else f"{e['edge_type']}:{e['slot']}"
-                    )
-                    edge_node = AptedNode(name=edge_label, node_type="__edge__", fields={})
-                    edge_node.add_child(child)
-                    apted_node.add_child(edge_node)
-                else:
-                    apted_node.add_child(child)
-                pending.append((e["target"], child))
-        return top
-
-    if len(roots) == 0:
-        return AptedNode("EMPTY")
-    if len(roots) == 1:
-        return build_subtree(roots[0])
-
-    super_root = AptedNode("ROOT")
+    workspace = AptedNode(_WORKSPACE, None, None)
+    # Explicit stack instead of recursion: the tree is as deep as the program is
+    # long (each next block hangs under the previous one).
+    pending = []
     for r in roots:
-        super_root.add_child(build_subtree(r))
-    return super_root
+        node = AptedNode(nodes[r].get("type"), ("top", None), _label(nodes[r]))
+        workspace.children.append(node)
+        pending.append((r, node))
+    while pending:
+        node_id, parent = pending.pop()
+        for e in children_map.get(node_id, []):
+            info = nodes[e["target"]]
+            child = AptedNode(info.get("type"), (e.get("edge_type"), e.get("slot")), _label(info))
+            parent.children.append(child)
+            pending.append((e["target"], child))
+    return workspace
 
 
 class VexConfig(Config):
-    """The cost model that makes the distance mean something for VEX. Inserting
-    or deleting a real block costs 1.0. The synthetic edge nodes cost 0 to add or
-    remove, so adding a single block scores 1 and not 2 (the block plus its
-    connector). Renames: free when the labels match, field_change_cost when only a
-    field changed inside the same block type, and type_change_cost when the block
-    type itself changed."""
+    """The cost model that makes the distance mean something for VEX. Inserting or
+    deleting a block costs 1. Renaming one block into another costs the largest of
+    the changes it covers: EDGE_CHANGE_COST when it now hangs off a different
+    connection (moved into a loop, to the else branch, into another slot), and
+    FIELD_CHANGE_COST when its fields changed or TYPE_CHANGE_COST when its type did.
+    So moving a block is 1, swapping it for another block in place is 1, and moving
+    it and changing its number is 1 too. The workspace root never changes.
+
+    The largest, not the sum: the apted package returns distances that are not
+    minimal when one rename costs more than inserting or deleting a block (found by
+    the symmetry check in test_robustness, confirmed against Zhang-Shasha), so no
+    rename may cost more than BLOCK_INSERT_COST or BLOCK_DELETE_COST."""
 
     def delete(self, node):
-        return EDGE_DELETE_COST if node.node_type == "__edge__" else BLOCK_DELETE_COST
+        return _NEVER if node.node_type == _WORKSPACE else BLOCK_DELETE_COST
 
     def insert(self, node):
-        return EDGE_INSERT_COST if node.node_type == "__edge__" else BLOCK_INSERT_COST
+        return _NEVER if node.node_type == _WORKSPACE else BLOCK_INSERT_COST
 
     def rename(self, n1, n2):
         if n1.name == n2.name:
             return 0.0
-        if n1.node_type == "__edge__" or n2.node_type == "__edge__":
-            return EDGE_CHANGE_COST
-        if n1.node_type == n2.node_type:
-            return FIELD_CHANGE_COST
-        return TYPE_CHANGE_COST
+        if _WORKSPACE in (n1.node_type, n2.node_type):
+            return _NEVER
+        cost = EDGE_CHANGE_COST if n1.connection != n2.connection else 0.0
+        if n1.label != n2.label:
+            cost = max(cost, FIELD_CHANGE_COST if n1.node_type == n2.node_type
+                       else TYPE_CHANGE_COST)
+        return cost
 
 
 def _tree_depth(tree):
@@ -201,7 +209,7 @@ _recursion_lock = threading.Lock()
 
 def _ensure_recursion_headroom(depth):
     """APTED indexes a tree recursively, one frame per level, and a program's tree
-    is as deep as its longest sequence (twice that with the edge nodes). Raise the
+    is as deep as its longest sequence. Raise the
     interpreter's limit to fit before calling it. The limit only ever goes up, so
     concurrent callers can't lower it under each other. Pure-Python frames don't
     use the C stack on Python 3.11+, so a higher limit is safe."""
@@ -223,15 +231,14 @@ def _signature(tree):
 
 
 def compute_edit_distance(ast_prev, ast_curr):
-    """The actual APTED distance between two run ASTs, rounded to a whole number
-    under the edge-aware cost model. 0 means the two are identical.
+    """The APTED distance between two ASTs under VexConfig, as a whole number (every
+    cost is a whole number). 0 means the two trees are identical.
 
-    Identical trees return 0 without running APTED. That is common: the AST leaves
-    out shadow literals, so a run that only changed a number (drive 200 -> 300)
-    has a different XML but the same tree."""
+    Identical trees return 0 without running APTED. Run scoring hits this for
+    workspaces that differ only in detached code (see scoring_ast)."""
     t1 = ast_to_apted_tree(ast_prev)
     t2 = ast_to_apted_tree(ast_curr)
     if _signature(t1) == _signature(t2):
         return 0
     _ensure_recursion_headroom(max(_tree_depth(t1), _tree_depth(t2)))
-    return int(round(APTED(t1, t2, VexConfig()).compute_edit_distance()))
+    return round(APTED(t1, t2, VexConfig()).compute_edit_distance())
