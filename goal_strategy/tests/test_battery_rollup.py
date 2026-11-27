@@ -8,7 +8,7 @@ The retired v1 (weighted-mean capability levels) has no tests — D2(a).
 from __future__ import annotations
 
 from goal_strategy.battery_rollup import (
-    GoalBand, banded_invariant, banded_rollup, load_rollup_card,
+    banded_invariant, banded_rollup, load_rollup_card,
 )
 from goal_strategy.testcases import (
     BatteryReport, CheckResult, ScenarioResult,
@@ -114,3 +114,15 @@ def test_real_card_loads_with_ruled_cuts():
     assert roi["check"] == "stays_on_island"
     assert [r["min"] for r in roi["rungs"]] == [0.5, 0.1, 0.0]
     assert roi.get("calibrated_model")
+
+
+def test_roi_probability_raises_on_a_broken_artifact(tmp_path):
+    import json
+    import pytest
+    from goal_strategy.battery_rollup import roi_probability
+    path = tmp_path / "purpose1_calibration.json"
+    assert roi_probability(_report(), artifact_path=str(path)) is None   # absent
+    path.write_text(json.dumps({"roi": {"kind": "logistic",
+                                        "feature_columns": ["f"], "coef": [0, 1]}}))
+    with pytest.raises(KeyError):                                       # no transform
+        roi_probability(_report(), artifact_path=str(path))
