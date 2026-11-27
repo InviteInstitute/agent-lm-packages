@@ -107,6 +107,24 @@ def test_alias_resolution_is_cached_and_cleared_with_configs(tmp_path, monkeypat
     load_configs.cache_clear()                          # don't leak the temp dir's map
 
 
+def test_battery_and_rollup_read_cards_from_the_config_dir(tmp_path, monkeypatch):
+    # GOAL_STRATEGY_CONFIG_DIR must reach the testcase cards too, not only the
+    # playground and goals cards. Here the host's cards keep one scenario.
+    from shutil import copytree
+    from goal_strategy.config import configs_root
+    from goal_strategy.tests.test_testcases import RESPONSIVE_PUSHER
+    copytree(configs_root(), tmp_path/'cards')
+    for path in (tmp_path/'cards/testcases/castle_crashers').glob('t*.yaml'):
+        if path.name != 't1_castle_wall.yaml':
+            path.unlink()
+    monkeypatch.setenv('GOAL_STRATEGY_CONFIG_DIR', str(tmp_path/'cards'))
+    result = goal_profile(RESPONSIVE_PUSHER, 'p/s/0', include_battery=True,
+                          include_rollup=True)
+    assert [s['scenario_id'] for s in result['battery']['scenarios']] == ['t1_castle_wall']
+    roi = result['rollup']['goals']['remain_on_island']
+    assert roi['n_valid'] + roi['n_abstained'] == 1
+
+
 def test_plain_output_reproducible_without_optional_imports():
     code = 'import sys,json; sys.modules.update({x:None for x in ["pandas","pyarrow","streamlit","plotly","apted"]}); from goal_strategy import goal_profile; print(json.dumps(goal_profile(' + repr(XML) + ',"stable"),sort_keys=True,allow_nan=False))'
     outputs = [subprocess.check_output([sys.executable, '-c', code], env=dict(os.environ, PYTHONHASHSEED=str(seed))) for seed in [1, 2, 42]]

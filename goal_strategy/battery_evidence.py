@@ -534,15 +534,8 @@ def family_evidence(report, evidences) -> list:
 
 def load_evidence_registry(playground: str = "castle_crashers",
                            configs_dir: str | None = None) -> dict:
-    from pathlib import Path
-
-    import yaml
-
-    from .config import _DEFAULT_CONFIGS_DIR
-    path = (Path(configs_dir or _DEFAULT_CONFIGS_DIR) / "testcases"
-            / playground / "_evidence.yaml")
-    card = yaml.safe_load(path.read_text()) if path.exists() else None
-    return card if isinstance(card, dict) else {}
+    from .config import load_testcase_card
+    return load_testcase_card(playground, "_evidence", configs_dir)
 
 
 def dimension_u_map(evidences, registry: dict) -> dict:

@@ -209,6 +209,12 @@ def configs_root(configs_dir=None):
     return Path(value).expanduser().resolve() if value else _DEFAULT_CONFIGS_DIR
 
 
+def load_testcase_card(playground: str, name: str, configs_dir=None) -> dict:
+    """testcases/<playground>/<name>.yaml under configs_root(), or {} if absent."""
+    path = configs_root(configs_dir) / "testcases" / playground / f"{name}.yaml"
+    return _load_yaml(path) if path.exists() else {}
+
+
 def load_configs(playground: str, configs_dir: str | None = None) -> LoadedConfig:
     # Copy cached cards/context so callers and scenarios cannot mutate other runs.
     return copy.deepcopy(_load_configs(playground, configs_root(configs_dir)))

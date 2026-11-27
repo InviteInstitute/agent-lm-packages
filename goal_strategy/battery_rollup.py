@@ -31,7 +31,7 @@ import json
 from dataclasses import dataclass
 from pathlib import Path
 
-from .config import _DEFAULT_CONFIGS_DIR, _load_yaml
+from .config import load_testcase_card
 from .paths import data_path
 
 
@@ -61,9 +61,7 @@ class GoalBand:
 
 
 def load_rollup_card(playground: str, configs_dir: str | None = None) -> dict:
-    path = (Path(configs_dir or _DEFAULT_CONFIGS_DIR) / "testcases"
-            / playground / "_rollup.yaml")
-    return _load_yaml(path) if path.exists() else {}
+    return load_testcase_card(playground, "_rollup", configs_dir)
 
 
 def _band_for(score: float, rungs: list) -> str:

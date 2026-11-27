@@ -75,9 +75,8 @@ def sweep(out_path: str, playground: str = "castle_crashers") -> dict:
                                   code_evidence,
                                   smc_lower_columns as _smc_lower_columns)
     from .rubric_combiner import load_claims
-    from .config import _DEFAULT_CONFIGS_DIR as _CFG, _load_yaml as _ly
-    from pathlib import Path as _P2
-    _pg = _ly(_P2(_CFG) / "playgrounds" / f"{playground}.yaml")
+    from .config import load_configs
+    _pg = load_configs(playground).card
     _geo = card_geometry_targets(_pg)
     _claims = load_claims(playground)
     _tol = float(_claims.get("calibration_tolerance_pct") or 10.0)

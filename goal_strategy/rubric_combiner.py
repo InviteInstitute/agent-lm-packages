@@ -21,7 +21,7 @@ import csv
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from .config import _DEFAULT_CONFIGS_DIR, _load_yaml
+from .config import load_testcase_card
 
 _W = {"primary": 1.0, "supporting": 0.5,
       # R2 Recovery ruling (2026-09-11): a CONSTRAINT claim contributes
@@ -51,9 +51,7 @@ class DimensionEvidence:
 
 def load_claims(playground: str = "castle_crashers",
                 configs_dir: str | None = None) -> dict:
-    path = (Path(configs_dir or _DEFAULT_CONFIGS_DIR) / "testcases"
-            / playground / "_claims.yaml")
-    return _load_yaml(path) if path.exists() else {}
+    return load_testcase_card(playground, "_claims", configs_dir)
 
 
 def _run_features(batt_rows: list, prod: dict | None,
