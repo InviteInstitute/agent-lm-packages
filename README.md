@@ -95,7 +95,7 @@ same runs that the batch call produces for the same prefix. See
 
 ```bash
 pip install .                            # Python 3.10+, all three core packages
-python test_smoke.py                     # original 40 sibling-package tests
+python test_smoke.py                     # log parser and learner-model smoke tests
 python examples/end_to_end.py            # narrated walkthrough with real output
 python examples/realtime.py              # online goal profiling, event by event
 ```
