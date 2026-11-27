@@ -27,10 +27,11 @@ from __future__ import annotations
 
 import argparse
 import csv
+from pathlib import Path
 
 from .battery_rollup import banded_invariant, load_rollup_card
 from .ccp_runs import load_ccp_runs
-from .config import load_configs
+from .config import load_configs, load_testcase_card
 from .testcases import run_battery
 
 
@@ -141,18 +142,7 @@ def sweep(out_path: str, playground: str = "castle_crashers",
     # OPTIONAL second gate. Ambiguity read from stage2_code_evidence.csv
     # when present (pipeline-faithful order: stage 2 regenerates first);
     # absent rows route structurally with the check recorded unavailable.
-    from pathlib import Path as _RP
-    import yaml as _yaml
-    # Port layout: cards ship inside the package (importlib resources), not at
-    # a repo-root ../../../configs. Resolve the router card via the shared
-    # config root so this works from a wheel too.
-    from .config import _DEFAULT_CONFIGS_DIR
-    router_path = (_RP(str(_DEFAULT_CONFIGS_DIR))
-                   / "testcases" / playground / "_router.yaml")
-    router = {}
-    if router_path.exists():
-        router = (_yaml.safe_load(router_path.read_text()) or {}).get(
-            "rubric_gate") or {}
+    router = load_testcase_card(playground, "_router").get("rubric_gate") or {}
     rubric_gate_on = bool(router.get("enabled"))
     rubric_families = set(router.get("families") or [])
     prod_alt: dict = {}
@@ -160,7 +150,7 @@ def sweep(out_path: str, playground: str = "castle_crashers",
         import csv as _csv
         # code-evidence lands beside the sweep outputs (same data dir as --out),
         # written by rung_sweep as stage2_code_evidence.csv.
-        ce_path = _RP(out_path).with_name("stage2_code_evidence.csv")
+        ce_path = Path(out_path).with_name("stage2_code_evidence.csv")
         if ce_path.exists():
             for row in _csv.DictReader(open(ce_path)):
                 try:
@@ -178,8 +168,7 @@ def sweep(out_path: str, playground: str = "castle_crashers",
     with open(out_path, "w", newline="") as fh:
         w = csv.DictWriter(fh, fieldnames=HEADER)
         w.writeheader()
-        from pathlib import Path as _Path
-        _op = _Path(out_path)
+        _op = Path(out_path)
         ev_path = _op.with_name(_op.stem + "_evidence.csv")
         ev_fh = open(ev_path, "w", newline="")
         ew = csv.DictWriter(ev_fh, fieldnames=EV_HEADER)

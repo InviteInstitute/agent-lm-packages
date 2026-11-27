@@ -50,7 +50,7 @@ from goal_strategy.detector.simulation.simulate_path import (
     simulate_path,
 )
 
-from .config import _DEFAULT_CONFIGS_DIR, ConfigError, _load_yaml
+from .config import ConfigError, _load_yaml, configs_root, load_configs
 from .paths import data_path, require_data
 from .indicators import _segment_closest
 
@@ -138,7 +138,7 @@ class BatteryReport:
 
 
 def load_scenarios(playground: str, configs_dir: str | None = None) -> list[dict]:
-    base = Path(configs_dir or _DEFAULT_CONFIGS_DIR) / "testcases" / playground
+    base = configs_root(configs_dir) / "testcases" / playground
     if not base.is_dir():
         return []
     out = []
@@ -631,10 +631,8 @@ def run_battery(workspace_xml: str, program_id: str,
     'invariance_budget_s' (the second point of the reviewer's two-budget
     invariance requirement: a capability level that changes with the budget
     is not a property of the program, so it must read U)."""
-    base = Path(configs_dir or _DEFAULT_CONFIGS_DIR)
-    base_card = _load_yaml(base / "playgrounds" / f"{playground}.yaml")
-    robot_path = base / "robot" / f"{base_card.get('robot_ref', 'vr_robot')}.yaml"
-    robot_card = _load_yaml(robot_path) if robot_path.exists() else {}
+    cfg = load_configs(playground, configs_dir)
+    base_card, robot_card = cfg.card, cfg.robot
     # Card-default scheduler (2026-08-27, mirrors profile.py): the battery
     # previously hard-defaulted to sequential, diverging from the shipped
     # cooperative execution model.
