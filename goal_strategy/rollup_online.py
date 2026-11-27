@@ -14,6 +14,10 @@ band is not the only signal. The other two goals (`engage_plow`,
 DERIVED transparently from the profile's own indicator rungs and labeled as
 such. Nothing here re-simulates or re-runs the battery: it consumes the shared
 report and the already-computed profile.
+
+The calibrated P(remain_on_island) is offline research output. It needs pandas
+and a model file the package does not ship, so the online `probability` is
+always null.
 """
 from __future__ import annotations
 
@@ -113,7 +117,8 @@ def goal_rollup(profile, report, playground="castle_crashers", configs_dir=None)
     """The `rollup` channel dict for one run: rolled-up claims for all four
     goals. Consumes the shared battery `report` and the computed `profile`."""
     card = load_rollup_card(playground, configs_dir)
-    bands = banded_rollup(report, card, playground=playground) if report else {}
+    bands = banded_rollup(report, card, probabilities=False,
+                          playground=playground) if report else {}
 
     goals = {}
     # clear_debris_zone: banded from the battery, enriched with the three signals

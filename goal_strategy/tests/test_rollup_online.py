@@ -106,3 +106,17 @@ def test_batch_and_stream_agree_on_rollup():
     online = GoalProfileStream("p/s", include_rollup=True).push(event)
     assert batch["rollup"] == online["rollup"]
     assert batch["rollup"] is not None
+
+
+def test_online_rollup_never_scores_the_offline_model(monkeypatch):
+    load_configs.cache_clear()          # drop any cached result for this input
+    import goal_strategy.battery_rollup as br
+
+    def offline_only(*args, **kwargs):
+        raise AssertionError("online rollup must not load the calibration model")
+
+    monkeypatch.setattr(br, "roi_probability", offline_only)
+    from goal_strategy.tests.test_testcases import RESPONSIVE_PUSHER  # battery-eligible
+    result = goal_profile(RESPONSIVE_PUSHER, "p/s/0", include_rollup=True)
+    assert "rollup_failed" not in result["diagnostics"]
+    assert result["rollup"]["goals"]["remain_on_island"]["probability"] is None

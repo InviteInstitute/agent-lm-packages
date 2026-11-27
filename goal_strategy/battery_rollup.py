@@ -114,26 +114,21 @@ def _family_island_means(report) -> dict:
 
 def roi_probability(report, playground: str = "castle_crashers",
                     artifact_path: str | None = None) -> float | None:
-    """Calibrated P(remain_on_island) from the on-disk candidate model;
-    None when the artifact (or pandas) is unavailable."""
-    try:
-        import pandas as pd
-        from .goal_calibration import predict
-        path = Path(artifact_path) if artifact_path else data_path(
-            "ccp_run_dataset", "purpose1_calibration.json")
-        if not path.exists():
-            return None
-        art = json.loads(path.read_text())
-        fit = art.get("roi")
-        if not fit:
-            return None
-        row = _family_island_means(report)
-        import numpy as np
-        df = pd.DataFrame([{c: row.get(c, np.nan)
-                            for c in fit["feature_columns"]}], dtype=float)
-        return float(predict(fit, df)[0])
-    except Exception:
+    """Calibrated P(remain_on_island) from the offline research model; None
+    when the artifact is not on disk. Needs pandas (the analysis extra)."""
+    path = Path(artifact_path) if artifact_path else data_path(
+        "ccp_run_dataset", "purpose1_calibration.json")
+    if not path.exists():
         return None
+    fit = json.loads(path.read_text()).get("roi")
+    if not fit:
+        return None
+    import pandas as pd
+    from .goal_calibration import predict
+    row = _family_island_means(report)
+    df = pd.DataFrame([{c: row.get(c, float("nan"))
+                        for c in fit["feature_columns"]}], dtype=float)
+    return float(predict(fit, df)[0])
 
 
 def banded_rollup(report, card: dict, probabilities: bool = True,
