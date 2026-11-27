@@ -1,15 +1,15 @@
 # Goal recognition
 
-This package holds the headless core of the `vex-goal-profiles` project:
+This package holds the headless core of the [`vex-goal-profiles`](https://github.com/InviteInstitute/vex-goal-profiles) research project:
 
 - Goal profiles
 - The Blockly parser and simulator
 - Timelines and the sensor battery
 - Purpose-2 rubric scoring and purpose-1 goal rollup
 - Batch analysis
-- The cards, tests and research documents
+- The cards and tests
 
-The package is agent-facing by design: one student program in, one JSON result out. The human-facing Streamlit review and validation apps and the research maintenance scripts are intentionally NOT part of this package. The core requires Python 3.10+ and PyYAML. pandas and pyarrow are optional, and only the batch and analysis tools use them.
+One student program goes in and one JSON result comes out. The core requires Python 3.10+ and PyYAML. pandas and pyarrow are optional, and only the batch and analysis tools use them.
 
 ## Install
 
@@ -99,7 +99,7 @@ stream.associate_outcome(1, {"playground_data": {"parameters": {"weight_cleared"
                              "end_status": "completed"})   # returns the refreshed run
 ```
 
-`push` assigns the same global run index, playground inheritance, stable `program_id` and diagnostics as the batch call. `goal_profiles_from_events` is a thin driver over one stream, so the two cannot diverge. This guarantee makes mid-session profiling trustworthy: the runs that a stream emits after *k* events are identical to `goal_profiles_from_events` over those same *k* events.
+`push` assigns the same global run index, playground inheritance, stable `program_id` and diagnostics as the batch call. `goal_profiles_from_events` is a thin driver over one stream, so the two cannot diverge. The runs that a stream emits after *k* events are identical to `goal_profiles_from_events` over those same *k* events.
 
 `associate_outcome` recomputes a prior run and never patches it. A late outcome thus gives exactly the run that the batch call produces with the outcome supplied at the start. A late outcome never leaves stale evidence. `GoalProfileStream(..., include_timeline=True, include_battery=True)` also streams those channels.
 
@@ -109,7 +109,7 @@ A long-lived host that stores each run can call `stream.release(index)` after it
 
 ## Execution and confidence
 
-The profile, timeline and review plots share one nominal execution and scoring scope. This scope includes the cooperative scheduler of the card, program rejection, boundary truncation and corroborated outcome override. Distinct battery and scatter worlds remain separate simulations.
+The profile and timeline share one nominal execution and scoring scope. This scope includes the cooperative scheduler of the card, program rejection, boundary truncation and corroborated outcome override. Distinct battery and scatter worlds remain separate simulations.
 
 Execution flags show capped loops, unknown reporters and statements, invalid expressions, and conditional model behavior. Explicit zero velocity keeps the previous fallback and carries `zero_velocity_assumed` pending a VEX measurement. Reachable procedure definitions contribute code and sensing evidence. Uncalled definitions remain excluded. Cooperative absolute turns use drivetrain arbitration. Each thread has its own procedure recursion tracking.
 
@@ -125,8 +125,6 @@ These items remain future work:
 - Feedback selection
 - Automatic raw-event outcome association
 
-See [PORT_COMPARISON.md](docs/PORT_COMPARISON.md) for the exact implemented-versus-wired status.
-
 ```python
 result = goal_profile(workspace_xml, program_id="student/session/run", include_rubric=True)
 # result['rubric'] = {'provisional': True, 'status': 'provisional_stage2E',
@@ -135,7 +133,7 @@ result = goal_profile(workspace_xml, program_id="student/session/run", include_r
 
 ## Resources and private data
 
-Bundled cards, detector CSV and local Blockly JavaScript ship in the wheel. The configuration precedence is:
+The bundled cards and the detector CSV ship in the wheel. The configuration precedence is:
 
 1. Explicit `configs_dir` on typed or internal tools
 2. `GOAL_STRATEGY_CONFIG_DIR`
@@ -172,7 +170,7 @@ python -m goal_strategy.testcases --out "$GOAL_STRATEGY_DATA_DIR/testcases_repor
 
 Use `--help` for playground, config, scheduler and input options. Each sweep restores the dry-run Unix alarm when the sweep ends. The alarm is for the main thread of the CLI. It is not a server request timeout API.
 
-## Validation and research history
+## Validation
 
 ```bash
 python -m pip install '.[dev]'
@@ -189,16 +187,4 @@ Ordinary test runs skip private-data cases when inputs are absent. The strict fl
 
 [EVIDENCE_MODEL.md](docs/EVIDENCE_MODEL.md), the live ECD reference, gives the evidentiary argument end to end: constructs, evidence sources, indicators, thresholds and combination.
 
-These items are deliberately NOT part of this agent-facing package. They are in the source `vex-goal-profiles` project:
-
-- The human-facing Streamlit review and validation apps
-- The human-review corpus
-- The research maintenance scripts
-- The frozen-fixture producer `tools/dump_frozen_paths.py`
-
-Further reading:
-
-- [MIGRATION_MAP.md](docs/MIGRATION_MAP.md): ownership and path changes.
-- [PORT_COMPARISON.md](docs/PORT_COMPARISON.md): the implemented-versus-wired status against current source.
-- [PORT_VALIDATION.md](docs/PORT_VALIDATION.md): validation results and remaining qualifications.
-- [SOURCE_README.md](docs/SOURCE_README.md), the living research notes and archived specifications: the original research history. Their historical status claims are not a substitute for the validation report of the port.
+[EVIDENCE_MODEL.md](docs/EVIDENCE_MODEL.md), [SENSOR_TESTBATTERY.md](docs/SENSOR_TESTBATTERY.md) and [RUBRIC_SCORING.md](docs/RUBRIC_SCORING.md) are copies from the source project, so the other documents they name (FINDINGS, OPEN_ISSUES, VALIDATION_PLAN, PIPELINE_DATAFLOW and `docs/archive/`) live there. So do the Streamlit review apps, the human-review corpus, the research maintenance scripts and the frozen-fixture producer `tools/dump_frozen_paths.py`.
