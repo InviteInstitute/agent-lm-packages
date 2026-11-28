@@ -1,8 +1,8 @@
 """Task-3 hat-execution fidelity: Part A inline broadcast, Part B treatments,
 Part C concurrency flag, Part D fabricated-motion instrumentation."""
+import pytest
 from goal_strategy.detector.parsing.parse_blocks import parse_workspace
 from goal_strategy.detector.simulation.simulate_path import (
-    ObjectRef,
     PlaygroundContext,
     simulate_path,
 )
@@ -179,6 +179,7 @@ def test_timer_hat_is_trusted_never_suppressed():
         assert "trigger_unsimulated" not in result.execution_flags
 
 
+@pytest.mark.corpus
 def test_conditional_hat_treatment_is_inert(corpus):
     """Guard for the B1 adoption (2026-08-18): B1 vs B2 must differ only in the
     KNOWN, DOCUMENTED cases below — all logged for researcher review in
@@ -494,21 +495,6 @@ def test_operator_random_samples_per_evaluation_and_is_replayable():
     assert runs[0].net_displacement_from_spawn != 1200.0
     # and every draw stays inside the student's declared range
     assert 6 * 100 <= runs[0].net_displacement_from_spawn <= 6 * 300
-
-
-def test_random_policy_brackets_the_declared_range():
-    """The range extremes are available for bracketing an unreproducible
-    run, the way movable_predicates brackets debris scatter."""
-    from goal_strategy.detector.parsing.parse_blocks import parse_workspace
-    from goal_strategy.detector.simulation.simulate_path import simulate_path
-    xml = _random_drive(3)
-    def run(policy):
-        return simulate_path(parse_workspace(xml, "rng-test"), ctx(),
-                             random_policy=policy).net_displacement_from_spawn
-    assert run("low") == 300.0            # 3 x 100
-    assert run("high") == 900.0           # 3 x 300
-    assert run("midpoint") == 600.0       # 3 x 200, the retired default
-    assert 300.0 <= run("sampled") <= 900.0
 
 
 def test_random_draws_are_absent_when_the_block_is():

@@ -13,7 +13,7 @@ from goal_strategy.detector.simulation.simulate_path import simulate_path, slice
 from goal_strategy.config import load_configs
 from goal_strategy.timeline import ORIGIN_STEP, timeline, timeline_result
 
-from goal_strategy.tests.test_hat_execution import drive_for, hat, turn_for, workspace
+from goal_strategy.tests.test_hat_execution import drive_for, hat, workspace
 
 PLAYGROUND = textwrap.dedent("""
     playground_id: toy_line
@@ -168,6 +168,7 @@ def test_events_ordered_by_step_then_card_order(toy):
                                     key=["reach", "sweep", "authored"].index)
 
 
+@pytest.mark.corpus
 def test_block_id_none_only_on_origin_pseudo_step(corpus):
     for prog in corpus[:30]:
         result = timeline_result(prog.workspace_xml or "", prog.program_id,
@@ -179,6 +180,7 @@ def test_block_id_none_only_on_origin_pseudo_step(corpus):
                 assert ev.block_id, (prog.program_id, ev)
 
 
+@pytest.mark.corpus
 def test_monotonicity_of_fast_scan_assumptions(corpus):
     """§A3: the fast paths assume prefix-monotone indicators — assert it."""
     cfg = load_configs("castle_crashers")
@@ -210,6 +212,7 @@ def test_monotonicity_of_fast_scan_assumptions(corpus):
     assert checked == 10
 
 
+@pytest.mark.corpus
 def test_binary_search_coverage_agrees_with_brute_force(corpus):
     cfg = load_configs("castle_crashers")
     spec = next(s for g in cfg.goals for s in g.intent
@@ -244,6 +247,7 @@ def test_binary_search_coverage_agrees_with_brute_force(corpus):
     assert checked == 10
 
 
+@pytest.mark.corpus
 def test_regression_c094_arm_then_approach_with_boundary_failure(corpus):
     prog = next(p for p in corpus if p.program_id.startswith("WREN-C094"))
     result = timeline_result(prog.workspace_xml, prog.program_id,
@@ -267,6 +271,7 @@ def test_regression_c094_arm_then_approach_with_boundary_failure(corpus):
     assert reached.step > attach.step   # the anchor-approach minimum comes later
 
 
+@pytest.mark.corpus
 def test_regression_c050_approach_then_arm(corpus):
     prog = next(p for p in corpus if p.program_id.startswith("WREN-C050"))
     result = timeline_result(prog.workspace_xml, prog.program_id,
@@ -278,6 +283,7 @@ def test_regression_c050_approach_then_arm(corpus):
     assert reached.step < armed.step        # approach-then-arm
 
 
+@pytest.mark.corpus
 def test_no_spans_and_lists_never_merged(corpus):
     """§A4: post-exit events are separate; §A1: events only, no span concepts."""
     exited = 0
@@ -301,6 +307,7 @@ def test_malformed_and_empty_programs(toy):
     assert all(e.step in (ORIGIN_STEP, 0) for e in result.events)
 
 
+@pytest.mark.corpus
 def test_timeline_performance(corpus):
     times = []
     for prog in corpus:

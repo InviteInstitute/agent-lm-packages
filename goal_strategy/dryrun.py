@@ -63,12 +63,6 @@ def sweep(runs, out_csv: str, per_run_seconds: int = 30,
 
 def _sweep(runs, out_csv, per_run_seconds, playground, configs_dir):
     cfg = load_configs(playground, configs_dir)
-    from .ccp_runs import stack_precedence_map
-    # OI-7 PAUSED (2026-08-25, reviewer parallel-execution investigation +
-    # arbitration adjudication: sequential-sum beats every exclusive-owner
-    # policy against GPS — see PARALLEL_EXECUTION.md). Machinery stays;
-    # flip to stack_precedence_map(...) only after the scheduling probes.
-    prec = {}
     from .profile import _profile
 
     signal.signal(signal.SIGALRM, lambda *_: (_ for _ in ()).throw(_WallTimeout()))
@@ -87,8 +81,7 @@ def _sweep(runs, out_csv, per_run_seconds, playground, configs_dir):
             try:
                 signal.alarm(per_run_seconds)
                 prof = _profile(r.workspace_xml or "", r.run_id,
-                                r.playground_params, playground, configs_dir=configs_dir,
-                                stack_precedence=prec.get(r.run_id))
+                                r.playground_params, playground, configs_dir=configs_dir)
                 for goal in prof.goals:
                     for ind in goal.intent + goal.attainment:
                         flags.update(ind.flags or [])

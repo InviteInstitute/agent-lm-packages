@@ -24,3 +24,10 @@ goal_strategy = ["README.md", "configs/*.yaml", "configs/playgrounds/*.yaml", "c
 
 [tool.pytest.ini_options]
 markers = ["corpus: requires confidential goal datasets or generated validation artifacts"]
+
+[tool.ruff]
+target-version = "py310"
+extend-exclude = ["goal_strategy/docs"]
+
+[tool.ruff.lint]
+select = ["F"]

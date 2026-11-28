@@ -28,9 +28,9 @@ def extract_code_facts(program: BlockProgram,
 
     # Active (attached) blocks only: a detached block never executes, and the
     # corpus regression pins confirm the design analysis scoped it this way.
-    # All field values on a block are collected (the registry's xml_fields
-    # list is stale for some blocks — the corpus XML carries ACTION where the CSV
-    # says STATE, and the simulator likewise reads both); the categorical rung
+    # All field values on a block are collected (the CSV's xml_fields column is
+    # stale for some blocks, since the corpus XML carries ACTION where the CSV
+    # says STATE, and the simulator likewise reads both). The categorical rung
     # matcher picks out card-declared labels, so extra values are inert.
     for node in program.iter_all_blocks():
         for fam in families_by_type.get(node.block_type, ()):

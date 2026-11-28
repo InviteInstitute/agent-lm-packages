@@ -75,7 +75,7 @@ joined = [{"goal": goal, "distance": distance}
 
 The caller supplies the ordered events of **one session of one student**. Every `runProject` gets a row, including invalid XML and unsupported playgrounds. The index matches `learner_models`. Equal or missing timestamps do not reorder runs. Missing playground names inherit the playground of the preceding run. Session ID plus index gives a stable run ID for complete-session prefix replays. The package does not support independently renumbered chunks.
 
-Both `content` and its `project` field accept dictionaries or JSON strings. `goal_profile_from_content(content, *, program_id, ...)` and `goal_profile_from_run_event(event, *, program_id, ...)` support single-run integration. Associated outcomes accept flat dictionaries or nested `{playground, parameters}` payloads, including JSON strings. `end_status` accepts `completed`, `stopped_by_user`, `timeout` or `error`.
+Both `content` and its `project` field accept dictionaries or JSON strings. `goal_profile_from_content(content, *, program_id, ...)` supports single-run integration. Associated outcomes accept flat dictionaries or nested `{playground, parameters}` payloads, including JSON strings. `end_status` accepts `completed`, `stopped_by_user`, `timeout` or `error`.
 
 Only Castle Crashers currently has cards. Its canonical name, VEX key `CastleCrasherPlus` and telemetry spelling `CasteCrasherPlus` all resolve through the card. Unsupported playgrounds return `status="unsupported_playground"` and `profile=None`. The package rejects conflicting telemetry identity. A missing first playground is unsupported. Only the direct XML API defaults to Castle Crashers.
 

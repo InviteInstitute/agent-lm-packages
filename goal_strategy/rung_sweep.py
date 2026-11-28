@@ -45,19 +45,12 @@ def indicator_columns(playground: str = "castle_crashers") -> list[str]:
 
 
 def sweep(out_path: str, playground: str = "castle_crashers") -> dict:
-    from .ccp_runs import stack_precedence_map
-
     runs = load_ccp_runs()
     # OI-28 (2026-08-28): same execution model as the fidelity sweep —
     # the measured 60Hz clock with each run's observed duration as the
     # wall-clock budget (session median where missing, flagged).
     from .ccp_runs import budget_for, duration_budgets
     sess_med, glob_med = duration_budgets(runs)
-    # OI-7 PAUSED (2026-08-25, reviewer parallel-execution investigation +
-    # arbitration adjudication: sequential-sum beats every exclusive-owner
-    # policy against GPS — see docs/archive/PARALLEL_EXECUTION.md). Machinery stays;
-    # flip to stack_precedence_map(...) only after the scheduling probes.
-    prec = {}
     # validation-307: last telemetry run per session (same rule as
     # fidelity_sweep — runs arrive session-ordered by run_seq)
     last_tel = {}
@@ -122,7 +115,6 @@ def sweep(out_path: str, playground: str = "castle_crashers") -> dict:
             p = r.playground_params or {}
             _b, _imp = budget_for(r, sess_med, glob_med)
             prof = _profile(r.workspace_xml or "", r.run_id, p,
-                            stack_precedence=prec.get(r.run_id),
                             run_duration_s=_b, duration_imputed=_imp)
             row = {
                 "run_id": r.run_id, "cohort": r.cohort, "school": r.school,

@@ -14,15 +14,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .block_registry import (  # noqa: E402
-    MOVEMENT_BLOCK_TYPES,
-    DRIVE_BLOCK_TYPES,
-    LOOP_BLOCK_TYPES,
-    CONDITIONAL_BLOCK_TYPES,
-    SENSOR_BLOCK_TYPES,
-    MAGNET_BLOCK_TYPES,
-    VARIABLE_BLOCK_TYPES,
+from .block_registry import (
     EVENT_BLOCK_TYPES,
+    MAGNET_BLOCK_TYPES,  # noqa: F401 (re-exported for the simulator)
     classify as _registry_classify,
 )
 
@@ -89,20 +83,9 @@ class BlockNode:
                 return f.value
         return None
 
-    def iter_sequence(self) -> "BlockNodeIterator":
-        """Yield this block and all subsequent siblings via .next links."""
-        node: BlockNode | None = self
-        while node is not None:
-            yield node
-            node = node.next
-
     def __repr__(self) -> str:  # pragma: no cover
         fields_str = ", ".join(f"{f.name}={f.value!r}" for f in self.fields)
         return f"BlockNode({self.block_type!r}[{fields_str}])"
-
-
-# Type alias to help type checkers — iter_sequence yields BlockNode
-BlockNodeIterator = "BlockNode"
 
 
 # ------------------------------------------------------------------ #
@@ -114,22 +97,6 @@ BlockNodeIterator = "BlockNode"
 # like "pg_events_" also matches broadcast / broadcast-and-wait, which are
 # ordinary stack blocks, and made a detached broadcast stack run as live code.
 HAT_BLOCK_TYPES: frozenset[str] = EVENT_BLOCK_TYPES
-
-# Block type sets are loaded from detector/data/blocks.csv via block_registry.py.
-# To add or fix a block, edit the CSV - no code change needed. The names below
-# are re-exported so that existing imports from this module continue to work
-# unchanged.
-__all__ = [
-    "HAT_BLOCK_TYPES",
-    "MOVEMENT_BLOCK_TYPES",
-    "DRIVE_BLOCK_TYPES",
-    "LOOP_BLOCK_TYPES",
-    "CONDITIONAL_BLOCK_TYPES",
-    "SENSOR_BLOCK_TYPES",
-    "MAGNET_BLOCK_TYPES",
-    "VARIABLE_BLOCK_TYPES",
-    "classify_block",
-]
 
 
 def classify_block(block_type: str) -> str:

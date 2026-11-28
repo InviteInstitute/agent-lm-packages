@@ -1,7 +1,10 @@
 """CLI smoke test: the review CSV covers all 119 programs, values and rungs flat."""
+import pytest
 import pandas as pd
 
 from goal_strategy.cli import main
+
+pytestmark = pytest.mark.corpus   # needs the private goal datasets
 
 
 def test_cli_writes_flat_csv(tmp_path):

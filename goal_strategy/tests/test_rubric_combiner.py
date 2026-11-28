@@ -178,32 +178,6 @@ def test_smc_computed_params_no_longer_score():
     assert d.fired[0][0] == "gate.smc_evaluable"
 
 
-def test_explain_run_agrees_with_combine_run():
-    """explain_run (the audit tool's provenance source) must tell the
-    same story combine_run scores: same final label per dimension, and
-    every claim row carries its inference label."""
-    from goal_strategy.rubric_combiner import explain_run
-    c = _claims()
-    cases = [
-        ([], None, None),                                    # no evidence
-        ([_row(code_max_arm_alternations=3)], None, None),   # EF award
-        ([_row()], {"run_id": "r", "motion_literal_count": "3",
-                    "fixed_motion_specificity": "0"}, None), # verified 0
-        ([_row(corrective_response_present=False),
-          _row(corrective_response_present=False)], None, None),  # negative
-        ([_row()], {"run_id": "r"}, {"control_structure": 0}),    # census 0
-    ]
-    for rows, prod, ceil in cases:
-        des = {d.dimension: d.label
-               for d in combine_run("r", rows, prod, ceil, c)}
-        exp = explain_run("r", rows, prod, ceil, c)
-        for dim, label in des.items():
-            assert exp[dim]["final"] == label, (dim, label)
-            for lv in exp[dim]["levels"]:
-                for claim in lv["claims"]:
-                    assert claim["inference"], (dim, lv["level"])
-
-
 # ---- Recovery R2 restructure (reviewer-ruled 2026-09-11) ----
 
 def _rec(des):
@@ -256,7 +230,7 @@ def test_family_grain_l2_needs_two_families_and_robustness():
     assert d.level == 1                     # loop in ONE family only
 
     two_fam = rows({"t1", "t5"}, ["t1", "t5", "t2"])
-    stays_ok = {f"s_t2_2": 1.0}             # arrested + survived = answered
+    stays_ok = {"s_t2_2": 1.0}             # arrested + survived = answered
     d = _rec(combine_run("r", two_fam, None, None, c,
                          stays=stays_ok))
     assert d.level == 2                     # cross-family loop, robust

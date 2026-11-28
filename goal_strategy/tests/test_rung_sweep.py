@@ -40,6 +40,7 @@ def rows():
         return list(csv.DictReader(fh))
 
 
+@pytest.mark.corpus
 def test_sweep_covers_all_runs_and_307(rows):
     assert len(rows) == 7984
     v307 = {r["run_id"] for r in rows if r["validation_307"] == "True"}
@@ -51,6 +52,7 @@ def test_sweep_covers_all_runs_and_307(rows):
         assert v307 == fid307   # same last-telemetry-run-per-session rule
 
 
+@pytest.mark.corpus
 def test_rows_match_live_profile_spot_check(rows):
     from goal_strategy.ccp_runs import load_ccp_runs
     by_id = {r.run_id: r for r in load_ccp_runs()}

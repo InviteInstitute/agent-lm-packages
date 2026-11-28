@@ -25,7 +25,7 @@ class Execution:
 
 def prepare_execution(workspace_xml, program_id, playground_params=None,
                       playground="castle_crashers", truncate=True, configs_dir=None,
-                      conditional_hats=None, stack_precedence=None, scheduler=None,
+                      conditional_hats=None, scheduler=None,
                       run_duration_s=None, duration_imputed=False):
     from .profile import _find_boundary_exit, _fall_off_tolerance, _on_island
     cfg = load_configs(playground, configs_dir)
@@ -71,7 +71,6 @@ def prepare_execution(workspace_xml, program_id, playground_params=None,
                "time_budget_s": float(run_duration_s)}
               if _hz and run_duration_s else {})
     full_sim = (simulate_path(program, cfg.context, conditional_hats=sim_mode,
-                              stack_precedence=stack_precedence,
                               scheduler=sched, **_clock)
                 if program is not None and not rejected else None)
     if full_sim is not None and _clock and duration_imputed:
@@ -116,11 +115,9 @@ def prepare_execution(workspace_xml, program_id, playground_params=None,
             h.block_type == "pg_events_when_started" for h in program.event_handler_stacks) > 1:
         # Distinct uncertainty worlds, never duplicate the nominal execution.
         floor = simulate_path(program, cfg.context, conditional_hats=sim_mode,
-                              scheduler=sched, stack_precedence=stack_precedence,
-                              movable_predicates="floor")
+                              scheduler=sched, movable_predicates="floor")
         ceiling = simulate_path(program, cfg.context, conditional_hats=sim_mode,
-                                scheduler=sched, stack_precedence=stack_precedence,
-                                movable_predicates="ceiling")
+                                scheduler=sched, movable_predicates="ceiling")
         if floor.exits_field_boundary != ceiling.exits_field_boundary:
             full_sim.execution_flags = sorted(set(full_sim.execution_flags + ["debris_bracket_divergent"]))
 

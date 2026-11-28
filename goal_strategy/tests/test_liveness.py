@@ -183,8 +183,8 @@ def test_disabled_body_block_and_reporter():
     body = _ws(_started(
         '<block type="pg_control_repeat" id="r"><value name="TIMES">'
         '<shadow type="math_number" id="n"><field name="NUM">2</field></shadow></value>'
-        f'<statement name="SUBSTACK">{_drive("off", 500, extra="disabled=\"true\"")}'
-        '</statement></block>'))
+        '<statement name="SUBSTACK">' + _drive("off", 500, extra='disabled="true"')
+        + '</statement></block>'))
     assert {b.block_id for b in parse_workspace(body, "t").iter_all_blocks()} == {"h", "r", "n"}
 
     # A disabled reporter leaves its slot to the shadow default.

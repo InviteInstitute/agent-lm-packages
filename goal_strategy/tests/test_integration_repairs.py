@@ -69,8 +69,6 @@ def test_continuous_approach_timeline(toy):
     assert any(e.indicator == 'approach' and e.to_rung == 'reached' for e in tl.events)
 
 
-from goal_strategy.tests.test_timeline import toy
-
 
 def test_procedure_reachability_and_thread_local_recursion():
     from goal_strategy.tests.test_oi23_builds import _definition, _call

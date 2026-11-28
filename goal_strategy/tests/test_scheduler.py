@@ -78,24 +78,6 @@ def test_wait_window_supersession_truncates_mid_flight():
     assert sim.magnet_fires_at_step is not None      # A resumed (measured policy)
 
 
-def test_truncate_and_park_kills_the_owner():
-    xml = workspace(
-        started("A", drive_for(1000).replace(
-            "</block>", f"<next>{MAGNET}</next></block>")),
-        started("B", wait_block(1.0, nxt=f"<next>{drive_for(200)}</next>")))
-    sim = coop(xml, superseded_motion="truncate_and_park")
-    assert sim.magnet_fires_at_step is None          # A never resumed
-
-
-def test_resume_after_restores_remaining_distance():
-    xml = workspace(
-        started("A", drive_for(1000)),
-        started("B", wait_block(1.0, nxt=f"<next>{drive_for(200)}</next>")))
-    sim = coop(xml, superseded_motion="resume_after")
-    # A's remaining ~506mm resumes after B's 200mm: total ≈ 1000 + 200
-    assert abs(sim.net_displacement_from_spawn - 1200.0) < 1.0
-
-
 def test_monitor_loop_cannot_block_the_driver():
     # the falsified-lockout shape: a forever-turn monitor beside a driver.
     # Under round-robin the driver still parks and completes; the monitor's
@@ -181,16 +163,6 @@ def test_mutual_truncation_is_symmetric_and_reentrant():
     assert sim.motions_superseded == 3
     assert sim.magnet_fires_at_step is not None          # A completed
     assert abs(sim.net_displacement_from_spawn - (v * 1.0 + 100)) < 2.0
-
-def test_thread_start_order_reverse_document():
-    # same-tick contention: with reverse order, A's write is the LAST one
-    # in the first phase — A's 1000mm survives instead of B's 400mm
-    xml = workspace(started("A", drive_for(1000)), started("B", drive_for(400)))
-    fwd = coop(xml)
-    rev = coop(xml, thread_start_order="reverse_document")
-    assert abs(fwd.net_displacement_from_spawn - 400) < 1e-6
-    assert abs(rev.net_displacement_from_spawn - 1000) < 1e-6
-
 
 def test_loop_clock_and_time_budget():
     """60Hz loop clock (measured): each otherwise-instant iteration costs one

@@ -11,7 +11,6 @@ the detection line — eye point on the line.
 """
 from __future__ import annotations
 
-import math
 from pathlib import Path
 
 import pytest
@@ -131,7 +130,6 @@ def test_eye_offset_shifts_detection_by_heading(ctx):
 def test_down_eye_near_object_fires_on_ring_but_not_grass(ctx):
     # Reviewer ruling 2026-08-19: the red line is a defined object; the grass
     # floor is not.
-    from goal_strategy.detector.parsing.block_program import BlockNode
     from goal_strategy.detector.simulation.simulate_path import _Simulator
 
     block = parse_workspace(

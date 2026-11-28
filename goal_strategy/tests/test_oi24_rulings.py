@@ -140,6 +140,7 @@ def test_switch_block_rejects_whole_program():
     assert code_inds                                          # code channel intact
 
 
+@pytest.mark.corpus
 def test_brightness_is_foreign_not_unmodeled():
     from goal_strategy.ccp_runs import load_ccp_runs
     from goal_strategy.profile import _profile

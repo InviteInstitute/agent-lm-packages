@@ -6,20 +6,15 @@ malformed XML or missing playground_params — indicators abstain with a reason.
 from __future__ import annotations
 
 import math
-import os
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from typing import Optional, Sequence
 
-from goal_strategy.detector.parsing.parse_blocks import parse_workspace
 from goal_strategy.detector.simulation.simulate_path import (
     SimulationResult,
-    simulate_path,
     slice_sim_result,
 )
 
-from .codefacts import extract_code_facts
-from .config import GoalSpec, IndicatorSpec, LoadedConfig, load_configs
-from .indicators import _polyline_min_distance
+from .config import GoalSpec, IndicatorSpec
 from .indicators import REGISTRY, EvalContext, IndicatorResult
 
 
@@ -93,7 +88,6 @@ def _profile(workspace_xml: str, program_id: str,
              truncate: bool = True,
              configs_dir: str | None = None,
              conditional_hats: str | None = None,
-             stack_precedence: str | None = None,
              scheduler: str | None = None,
              run_duration_s: float | None = None,
              duration_imputed: bool = False,
@@ -102,19 +96,15 @@ def _profile(workspace_xml: str, program_id: str,
     regression pins, an alternate configs directory for tests, and the task-3
     Part-B conditional-hat treatment — "execute" (B1, default), "suppress" (B2),
     or "abstain" (B3: B2's path, simulation channel abstains). Defaults to B1 so
-    nothing changes silently; also settable via VEX_GOAL_PROFILES_CONDITIONAL_HATS.
-    `stack_precedence` is the OI-7 winning when_started block id recovered from
-    longitudinal snapshots (see simulate_path) — None (the default, and the only
-    value the dev-corpus path ever passes) is byte-identical to pre-lockout
-    behavior.
+    nothing changes silently; also settable via GOAL_STRATEGY_CONDITIONAL_HATS.
     """
     from .execution import prepare_execution
     execution = _execution or prepare_execution(
         workspace_xml, program_id, playground_params, playground, truncate,
-        configs_dir, conditional_hats, stack_precedence, scheduler,
+        configs_dir, conditional_hats, scheduler,
         run_duration_s=run_duration_s, duration_imputed=duration_imputed)
     cfg, program, ectx = execution.config, execution.program, execution.context
-    full_sim, scored_sim = ectx.full_sim, ectx.scored_sim
+    full_sim = ectx.full_sim
     code_facts = ectx.code_facts
     treatment = ectx.conditional_hat_treatment
     boundary_exceeded = ectx.boundary_exceeded
