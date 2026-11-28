@@ -64,9 +64,8 @@ def sweep(out_path: str, playground: str = "castle_crashers") -> dict:
     # emitted in the SAME pass so the D-c production-vs-battery claims
     # never require re-simulating. One row per run.
     from pathlib import Path as _P
-    from .rubric_evidence import (calibration_audit, card_geometry_targets,
-                                  code_evidence,
-                                  smc_lower_columns as _smc_lower_columns)
+    from .rubric_evidence import (CODE_EVIDENCE_HEADER, card_geometry_targets,
+                                  code_evidence, code_evidence_row)
     from .rubric_combiner import load_claims
     from .config import load_configs
     _pg = load_configs(playground).card
@@ -77,36 +76,9 @@ def sweep(out_path: str, playground: str = "castle_crashers") -> dict:
     _spec_rule = _claims.get("smc_specificity") or {}
     _op = _P(out_path)
     ce_path = _op.with_name("stage2_code_evidence.csv")
-    CE_HEADER = ["run_id", "config_version",
-                 "sensing_in_executable", "sensing_in_recurrent",
-                 "has_loops", "has_conditionals", "has_procedures",
-                 "has_variables", "ceilings",
-                 "max_arm_alternations", "coordination_relations",
-                 "coordination_detail", "wait_release_total",
-                 "state_terminated_motion_fraction",
-                 "exercised_loops_fixed", "exercised_loops_state",
-                 "exercised_loops_forever", "exercised_conditionals",
-                 "max_nesting_depth", "state_controlled_termination",
-                 "state_gated_drivetrain", "computed_motion_params",
-                 "procedure_calls", "procedure_reused",
-                 "variable_sets", "variable_reads",
-                 "duplicated_sequences",
-                 "calibrated_param_matches", "motion_literal_count",
-                 # SMC lower-scale restructure (2026-09-09): ONE ordinal
-                 # indicator + its vocabulary diagnostics (ingredients,
-                 # never separate scoring variables) + the route-A
-                 # contamination annotation.
-                 "fixed_motion_specificity",
-                 "distinct_drive_clusters", "distinct_turn_clusters",
-                 "canonical_prop", "fine_value_count",
-                 "canonical_ambiguous_matches",
-                 # OI-33 ruling (2026-09-10): executed state-gating is
-                 # the SMC-2 scoring variant; the sensor-field list is
-                 # the mis-wired-sensor diagnostic.
-                 "state_gated_drivetrain_executed", "gated_sensor_fields"]
     ce_fh = open(ce_path, "w", newline="")
     ce_w = csv.writer(ce_fh)
-    ce_w.writerow(CE_HEADER)
+    ce_w.writerow(CODE_EVIDENCE_HEADER)
     n = 0
     with open(out_path, "w", newline="") as fh:
         w = csv.writer(fh)
@@ -138,34 +110,10 @@ def sweep(out_path: str, playground: str = "castle_crashers") -> dict:
             sim = getattr(prof, "full_sim", None)
             program = getattr(prof, "parsed_program", None)
             if sim is not None and program is not None:
-                ce = code_evidence(program, sim)
-                ce_w.writerow([
-                    r.run_id, prof.config_version,
-                    ce.sensing_in_executable, ce.sensing_in_recurrent,
-                    ce.has_loops, ce.has_conditionals, ce.has_procedures,
-                    ce.has_variables,
-                    ";".join(f"{k}:{v}" for k, v in sorted(ce.ceilings.items())),
-                    ce.max_arm_alternations,
-                    ce.construct_coordination_relations,
-                    "|".join(ce.coordination_detail),
-                    sum(ce.wait_release_counts.values()),
-                    ("" if ce.state_terminated_motion_fraction is None
-                     else round(ce.state_terminated_motion_fraction, 3)),
-                    ce.exercised_loops_fixed, ce.exercised_loops_state,
-                    ce.exercised_loops_forever, ce.exercised_conditional_count,
-                    ce.max_nesting_depth, ce.state_controlled_termination,
-                    ce.state_gated_drivetrain_count,
-                    ce.computed_motion_param_count,
-                    ce.procedure_metrics.get("calls", 0),
-                    ce.procedure_metrics.get("reused", 0),
-                    ce.variable_metrics.get("sets", 0),
-                    ce.variable_metrics.get("reads", 0),
-                    ce.duplicated_sequence_count,
-                    *calibration_audit(program, _geo, _tol),
-                    *_smc_lower_columns(program, _geo, _tol,
-                                        _palette, _spec_rule),
-                    ce.state_gated_drivetrain_executed,
-                    ";".join(ce.gated_sensor_fields)])
+                row = code_evidence_row(code_evidence(program, sim), program,
+                                        r.run_id, prof.config_version, _geo,
+                                        _tol, _palette, _spec_rule)
+                ce_w.writerow([row[c] for c in CODE_EVIDENCE_HEADER])
             n += 1
             if n % 500 == 0:
                 print(f"  {n}/{len(runs)}")

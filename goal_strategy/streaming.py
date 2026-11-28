@@ -77,7 +77,7 @@ class GoalProfileStream:
         self.runs.append(result)
         # Keep only what re-profiling needs: the owned content copy, the resolved
         # playground/inheritance, the pristine content diagnostics, and the ts.
-        # Not the whole event (it re-holds the content) - see review #2.
+        # Not the whole event, which would hold the content a second time.
         self._records.append(dict(content=content, effective=effective, inherited=inherited,
                                   ts=event.get('ts'), event_index=event_index,
                                   content_diagnostics=content_diagnostics))

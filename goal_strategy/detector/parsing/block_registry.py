@@ -73,7 +73,6 @@ def simulator_status(block_name: str) -> str:
     return _simulator_status_map.get(block_name, "unknown")
 
 MAGNET_BLOCK_TYPES: frozenset[str] = _classification_map.get("magnet", frozenset())
-EVENT_BLOCK_TYPES: frozenset[str] = _classification_map.get("event", frozenset())
 
 
 def classify(block_name: str) -> str:

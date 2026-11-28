@@ -3,9 +3,10 @@
 VENDORING STATUS — no longer byte-identical to VEX_model_tracing:
   * OI-14 fix (reviewer-authorised 2026-08-18): the <value> branch prefers a
     connected <block> over the obscured <shadow> default, per Blockly convention.
-  * Liveness: hats are the explicit HAT_BLOCK_TYPES set (not a "pg_events_"
-    prefix, which also caught broadcast blocks), called My Block definitions are
-    live (procedure_stacks), and disabled blocks are dropped at parse time.
+  * Liveness: hats are log_parser_delta_engine.liveness.HAT_BLOCK_TYPES (not a
+    "pg_events_" prefix, which also caught broadcast blocks), called My Block
+    definitions are live (procedure_stacks), and disabled blocks are dropped at
+    parse time.
 
 The Blockly XML schema uses namespace https://developers.google.com/blockly/xml.
 Unnamespaced input is normalized to it, so tag lookups use the fully-qualified
@@ -29,6 +30,8 @@ from __future__ import annotations
 
 import xml.etree.ElementTree as ET
 from typing import Optional
+
+from log_parser_delta_engine.liveness import is_disabled
 
 from .block_program import (
     PROCEDURE_CALL,
@@ -195,12 +198,6 @@ def _split_live(stacks: list[BlockNode]) -> tuple[list, list, list]:
 # Internal helpers
 # ------------------------------------------------------------------ #
 
-def _is_disabled(el: ET.Element) -> bool:
-    """Blockly marks a disabled block with disabled="true" (older XML) or a
-    non-empty disabled-reasons attribute (newer XML)."""
-    return el.get("disabled") in ("true", "1") or bool(el.get("disabled-reasons"))
-
-
 def _count_dropped(el: ET.Element) -> int:
     """Blocks and shadows owned by a disabled element: the element and its
     statement / value subtrees, but not its <next> chain (which still runs)."""
@@ -239,7 +236,7 @@ def _parse_block_el(
     while cur is not None:
         if not cur.get("type", ""):
             break
-        if disabled is not None and _is_disabled(cur):
+        if disabled is not None and is_disabled(cur):
             disabled[0] += _count_dropped(cur)
             cur = _next_el(cur)
             continue
@@ -317,7 +314,7 @@ def _parse_one_block(
             chosen = None
             for sub in child_el:
                 if sub.tag == _TAG_BLOCK:
-                    if disabled is not None and _is_disabled(sub):
+                    if disabled is not None and is_disabled(sub):
                         disabled[0] += _count_dropped(sub)
                         continue
                     chosen = sub

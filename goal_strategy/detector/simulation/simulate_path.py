@@ -636,7 +636,7 @@ class SimulationResult:
     # estimates and final position may underrepresent the actual runtime behavior.
     loop_was_capped: bool = False
 
-    # ---- Stage 0b fidelity propagation (additive, 2026-08-14) ---- #
+    # ---- Fidelity propagation ---- #
     # Path-step indices at which a loop cap fired — lets slices answer
     # loop_was_capped PER SPAN instead of program-wide.
     loop_cap_steps: list = field(default_factory=list)
@@ -1243,9 +1243,8 @@ def simulate_path(
         sim.max_unroll = 10**9
         # OI-28 cap semantics: with the budget governing, the unroll cap is
         # not what stopped the loop, so loop_was_capped must NOT be set —
-        # budget stops carry their own `time_budget_exhausted` flag. Never
-        # repurpose a flag (house rule): a capped run and a
-        # budget-exhausted run are different uncertainty statements.
+        # budget stops carry their own `time_budget_exhausted` flag. A capped
+        # run and a budget-exhausted run are different uncertainty statements.
         sim.budget_mode = True
     elif loop_iteration_time_s > 0:
         # OI-28 hardening (2026-08-28): the clock WITHOUT a budget leaves
@@ -1295,7 +1294,7 @@ def simulate_path(
             # here, as it would have inside the main loop, instead of escaping.
             pass
     result = sim.build_result()
-    # Stage 0b (additive): blocks.csv simulator_status for every block type the
+    # blocks.csv simulator_status for every block type the
     # program contains — executed or not — so the evidence layer can see which
     # semantics the reconstruction actually carries (C12).
     from ..parsing import block_registry as _br
@@ -1464,7 +1463,7 @@ def slice_sim_result(
         region_cells_visited={k: len(v) for k, v in region_cells.items()},
         regions_entered=regions_entered,
         magnet_fires_at_step=adjusted_magnet,
-        # Stage 0b: per-span loop_was_capped — a cap only taints the spans that
+        # Per-span loop_was_capped: a cap only taints the spans that
         # contain (or follow) it. When cap steps were recorded, a slice is
         # capped iff a cap fired at or before its end and inside-or-before it;
         # legacy results without cap steps fall back to the program-wide flag.
