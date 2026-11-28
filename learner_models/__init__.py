@@ -20,7 +20,7 @@ Public API:
   compute_run_edit_distances, RunDistanceStream   (run_sequence)
   detect_run_triggers, detect_run_triggers_by_playground   (triggers)
   is_inactive, detect_inactive_trigger, INACTIVE_RUN_INDEX  (triggers)
-  segment_session, segment_episodes, boundary_kind          (episodes)
+  segment_session                                           (episodes)
   SessionSegmenter (incremental segment_session)            (episodes)
   cached_edit_distance, clear_cache                         (distance)
   xml_to_block_ast, extract_workspace_xml                   (ast_builder)
@@ -28,12 +28,11 @@ Public API:
 
 Workspace rendering (compact + readable) lives in log_parser_delta_engine.
 
-Needs the `apted` package (see requirements.txt). Everything else is stdlib.
+Needs the `apted` package (a declared dependency). Everything else is stdlib.
 """
 from .ast_builder import extract_workspace_xml, xml_to_block_ast
-from .constants import boundary_kind
 from .distance import cached_edit_distance, clear_cache
-from .episodes import SessionSegmenter, segment_episodes, segment_session
+from .episodes import SessionSegmenter, segment_session
 from .run_sequence import RunDistanceStream, compute_run_edit_distances
 from .switches import detect_switches
 from .triggers import (
@@ -48,7 +47,6 @@ __all__ = [
     "INACTIVE_RUN_INDEX",
     "RunDistanceStream",
     "SessionSegmenter",
-    "boundary_kind",
     "cached_edit_distance",
     "clear_cache",
     "compute_run_edit_distances",
@@ -58,7 +56,6 @@ __all__ = [
     "detect_switches",
     "extract_workspace_xml",
     "is_inactive",
-    "segment_episodes",
     "segment_session",
     "xml_to_block_ast",
 ]

@@ -10,10 +10,6 @@ requires-python = ">=3.10"
 dependencies = ["apted>=1.0", "pyyaml"]
 
 [project.optional-dependencies]
-log-parser = []
-learner-models = ["apted>=1.0"]
-
-goal-strategy = ["pyyaml"]
 goal-strategy-analysis = ["pandas", "pyarrow"]
 dev = ["pytest", "build", "pandas", "pyarrow", "zss"]
 

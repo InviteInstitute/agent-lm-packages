@@ -1,8 +1,8 @@
 # log_parser_delta_engine
 
 This package rebuilds a VEX **workspace** from the activity of a student and renders it as
-pseudo-code. Every VEX log event has the whole project, so the log parser rebuilds the workspace
-from that snapshot on each event. The package has two renderers: compact (LLM) and readable
+pseudo-code. Every VEX log event has the whole project, so the renderers work from that snapshot
+of the latest event. The package has two renderers: compact (LLM) and readable
 (human). Both renderers separate the code that can run from the code that cannot run. See
 [What counts as live code](#what-counts-as-live-code).
 
@@ -12,7 +12,7 @@ The package uses only the stdlib (`json`, `xml.etree`). You do not need to insta
 
 ```python
 from log_parser_delta_engine import (
-    smart_delta_engine, generate_compact_prompt, generate_compact_prompt_from_content,
+    generate_compact_prompt, generate_compact_prompt_from_project,
     generate_readable_text, generate_readable_lines,
 )
 ```
@@ -26,26 +26,14 @@ prompt = generate_compact_prompt(xml_string)
 # or None if the workspace has no blocks
 ```
 
-**2. Compact prompt from a VEX log content dict** (LLM). This call skips the manual XML extraction.
+**2. Compact prompt from a VEX log event's project** (LLM). Pass the `content.project` value of
+the latest event (a dict or a JSON string), and the call pulls the workspace XML out of it.
 
 ```python
-prompt = generate_compact_prompt_from_content(content)
-# content is the parsed "content" field of a VEX log event
+prompt = generate_compact_prompt_from_project(content["project"])
 ```
 
-**3. Compact prompt from an event stream** (LLM). Feed events as they arrive. The engine always
-shows the project snapshot of the latest event.
-
-```python
-engine = smart_delta_engine()
-for log_event in events:              # each: {"content": <json str or dict>, ...}
-    engine.process_log(log_event)
-engine.get_runnable_block_count()     # int: blocks that can run (live, not disabled)
-engine.get_total_blocks()             # int: all blocks on the canvas (shadows excluded)
-engine.generate_compact_prompt()      # str: same [Active]/[Orphaned] pseudo-code
-```
-
-**4. Readable pseudo-code from workspace XML** (human). This output has full block names, infix
+**3. Readable pseudo-code from workspace XML** (human). This output has full block names, infix
 operators and inline values, with live code first and orphans after it.
 
 ```python
@@ -58,12 +46,7 @@ generate_readable_lines(xml_string)   # list[str], same content as a list
 | Symbol | Input | Output |
 |---|---|---|
 | `generate_compact_prompt(xml_string)` | workspace XML `str` (or `None`) | pseudo-code `str`, or `None` if empty/unparseable |
-| `generate_compact_prompt_from_content(content)` | parsed VEX log content dict | pseudo-code `str`, or `None` if no workspace |
 | `generate_compact_prompt_from_project(project)` | raw `content.project` value (dict or JSON `str`) | pseudo-code `str`, or `None` if empty/no blocks |
-| `smart_delta_engine().process_log(log_event)` | dict with a `content` key (JSON str or dict) | `None` (rebuilds engine state from `content.project`) |
-| `smart_delta_engine().get_runnable_block_count()` | none | `int` (blocks that can run: in a live stack and not disabled) |
-| `smart_delta_engine().get_total_blocks()` | none | `int` (all blocks on the canvas, shadows excluded) |
-| `smart_delta_engine().generate_compact_prompt()` | none | `str` (the compact pseudo-code listing) |
 | `generate_readable_text(xml_string)` | workspace XML `str` | readable pseudo-code `str` (empty string if blank/broken) |
 | `generate_readable_lines(xml_string)` | workspace XML `str` | `list[str]`, one line per stackable block, `""` between stacks (empty list if blank/broken) |
 | `liveness.split_stacks(root)` | namespace-stripped workspace `Element` | `(active, orphaned)` lists of top-level `<block>` elements |
@@ -155,17 +138,12 @@ not connected (won't run):
 - My Blocks read `define <name>` and `call <name>`, with arguments filled into the name.
 - Disabled blocks end with `(disabled)`.
 
-## Events handled
+## Why snapshots and not deltas
 
 Every VEX log event (`blockCreated`, `blockMoved`, `blockChanged`, `blockDeleted`, `runProject`,
-`menuSelect`, ...) has the whole project, workspace XML included, in `content.project`.
-`process_log` rebuilds the workspace from that snapshot on every event that has one, whatever its
-`eventType`. An empty workspace clears the state. The engine ignores events without a `project`,
-and anything that it cannot parse, with no exceptions. An event whose workspace string is the same
-as the last one (most `menuSelect`, `runProject` and UI events) skips the rebuild.
-
-The engine does not replay the `blockEventData` delta of the event. In real logs, this delta has
-too little data for a rebuild:
+`menuSelect`, ...) has the whole project, workspace XML included, in `content.project`. The
+renderers read that snapshot and never replay the `blockEventData` delta of the event. In real
+logs, this delta has too little data for a rebuild.
 
 - A move names the new parent but not the slot that the block went into.
 - Shadow blocks (the inline number pickers) never get a create event.
@@ -173,10 +151,10 @@ too little data for a rebuild:
 
 ## Input shape
 
-`process_log` needs a dict with a `content` key. This key holds the VEX log content (a JSON string
-or a dict) with a `project` (a JSON string or a dict with a `workspace` XML string). All three
-standalone renderers (`generate_compact_prompt`, `generate_readable_text`,
+All three standalone renderers (`generate_compact_prompt`, `generate_readable_text`,
 `generate_readable_lines`) take a workspace XML string directly.
+`generate_compact_prompt_from_project` takes the `project` value (a JSON string or a dict with a
+`workspace` XML string).
 
 ### What is the workspace XML?
 

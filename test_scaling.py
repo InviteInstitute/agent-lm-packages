@@ -11,7 +11,6 @@ from learner_models import (
     xml_to_block_ast,
 )
 from learner_models.constants import MAX_DIFF_BLOCKS
-from log_parser_delta_engine import smart_delta_engine
 
 NS = 'xmlns="https://developers.google.com/blockly/xml"'
 
@@ -106,21 +105,6 @@ def test_distance_cache_is_bounded(monkeypatch):
         distance.cached_edit_distance(a, b, xml_to_block_ast(a), xml_to_block_ast(b))
     assert len(distance._distance_cache) == 3
     distance.clear_cache()
-
-
-def test_delta_engine_skips_unchanged_workspaces(monkeypatch):
-    engine = smart_delta_engine()
-    ev = {"content": {"project": {"workspace": _straight(4)}}}
-    engine.process_log(ev)
-    before = engine.generate_compact_prompt()
-    calls = []
-    monkeypatch.setattr(engine, "_bootstrap_from_xml", lambda xml: calls.append(xml))
-    engine.process_log(ev)
-    engine.process_log({"content": {"eventType": "menuSelect", "project": {"workspace": _straight(4)}}})
-    assert calls == []
-    assert engine.generate_compact_prompt() == before
-    engine.process_log({"content": {"project": {"workspace": _straight(5)}}})
-    assert len(calls) == 1
 
 
 def _random_stream(rng, n):

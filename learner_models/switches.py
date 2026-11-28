@@ -34,8 +34,8 @@ def detect_switches(prev_id, prev_class, curr_id, curr_class):
     and the first class it's ever seen under both read as "no switch".
     """
     switches = []
-    # Same handle ignoring case, but the spelling changed. The .lower() guard
-    # keeps this honest as a standalone function.
+    # Same handle ignoring case, but the spelling changed. Callers may pass any
+    # two ids, so the .lower() comparison is checked here too.
     if prev_id and curr_id and prev_id != curr_id and prev_id.lower() == curr_id.lower():
         switches.append(("casing", prev_id, curr_id))
     if prev_class and curr_class and prev_class != curr_class:

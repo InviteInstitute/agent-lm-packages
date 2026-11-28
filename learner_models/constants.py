@@ -38,9 +38,9 @@ TRIGGER_LABELS = {
 
 # ==========================================================================
 # Episode segmentation
-# Hard-boundary episode types stop the episodes around them from merging no matter
-# how small the time gap is. Soft events never make an episode on their own, they
-# just fold into whatever episode is around them.
+# Pauses are hard boundaries that stop the episodes around them from merging. Soft
+# events never make an episode on their own, they just fold into whatever episode is
+# around them.
 # ==========================================================================
 PAUSE_THRESHOLD_S = 300.0             # gap >= this becomes INACTIVE_PAUSE
 SHORT_PAUSE_MIN_S = 5.0               # smallest gap that counts as a contextual pause
@@ -51,11 +51,6 @@ CODE_EVENTS = frozenset({"blockMoved", "blockChanged", "blockCreated", "blockDel
 RUN_START_EVENTS = frozenset({"runProject"})
 RUN_END_EVENTS = frozenset({"projectEnd"})
 RESET_EVENTS = frozenset({"loadProject", "newProject"})
-
-# Episode types that act as merge barriers regardless of the merge gaps.
-HARD_BOUNDARY_EPISODE_TYPES = frozenset({"RUN", "CODE", "RESET", "INACTIVE_PAUSE", "POST_RUN_PAUSE"})
-# Pause categories tagged as "hard" boundaries downstream.
-HARD_PAUSE_TYPES = frozenset({"INACTIVE_PAUSE", "POST_RUN_PAUSE"})
 
 # Event types absorbed into surrounding episodes (no episode of their own).
 SOFT_EVENT_TYPES = frozenset({
@@ -74,8 +69,3 @@ POST_RUN_PAUSE_TRANSPARENT_TYPES = frozenset({
     "playgroundData",                                                         # performance_data
 })
 
-
-def boundary_kind(episode_type):
-    """Classify an episode_type as a 'hard' or 'soft' boundary (only the pause
-    types count as hard here)."""
-    return "hard" if episode_type.upper() in HARD_PAUSE_TYPES else "soft"

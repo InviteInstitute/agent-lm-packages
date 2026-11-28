@@ -1,19 +1,13 @@
 """
-Chops a session into CODE / RUN / RESET episodes.
+Chops a session into CODE / RUN / RESET episodes and the pauses between them.
 
 Events are walked in time order and grouped into episodes, stopping whenever there's
 a hard-pause boundary, and folding the "soft" UI events into whatever episode is around
 them so they don't clutter the timeline.
 
-segment_episodes inputs:
-- events: dicts with at least {'event_type', 'ts'}, already sorted by ts.
-- hard_pause_after_idx: the set of indices i where a hard pause sits between events[i]
-  and events[i+1]. The pause detectors below build this from long gaps (INACTIVE_PAUSE)
-  or from POST_RUN_PAUSE.
-
-segment_episodes output:
-- a list of episode dicts: {episode_type, boundary, start_idx, end_idx, start_ts,
-  end_ts, event_count, soft_indices}. start_idx is inclusive and end_idx is exclusive.
+Each episode is a dict {episode_type, boundary, start_idx, end_idx, start_ts, end_ts,
+event_count, soft_indices}. start_idx is inclusive and end_idx is exclusive. Each pause
+is a dict {after_idx, duration, episode_type, boundary}.
 """
 from .constants import (
     CODE_EVENTS,
@@ -25,7 +19,6 @@ from .constants import (
     RUN_START_EVENTS,
     SHORT_PAUSE_MIN_S,
     SOFT_EVENT_TYPES,
-    boundary_kind,
 )
 
 
@@ -41,155 +34,16 @@ def _classify_event(event_type: str) -> str:
     return ''
 
 
-def segment_episodes(events: list[dict], hard_pause_after_idx: set[int]) -> list[dict]:
-    """Pass 2: scan the events once and emit episodes. RESET is a single event,
-    RUN runs until projectEnd (inclusive), another actionful event, or a hard
-    pause. CODE runs through consecutive code events. Soft events are absorbed
-    into the open episode, and orphan soft/unknown events are skipped."""
-    episodes: list[dict] = []
-    i = 0
-    n = len(events)
-
-    while i < n:
-        et = events[i].get('event_type', '')
-
-        if et in SOFT_EVENT_TYPES:
-            # A soft event with no episode open yet. Nothing to fold it into, so
-            # skip it (absorption only happens inside an episode, below).
-            i += 1
-            continue
-
-        kind = _classify_event(et)
-        if not kind:
-            # Event type not relevant here, skip it.
-            i += 1
-            continue
-
-        start = i
-        soft_indices: list[int] = []
-        j = i
-
-        if kind == 'RESET':
-            # RESET is structural, so it's always its own one-event episode.
-            j = i + 1
-
-        elif kind == 'RUN':
-            # Extend through soft events, close at projectEnd (inclusive) or
-            # at the first non-soft event that isn't a continuation, or at a hard pause.
-            j = i + 1
-            while j < n:
-                if (j - 1) in hard_pause_after_idx:
-                    break
-                t = events[j].get('event_type', '')
-                if t in RUN_END_EVENTS:
-                    j += 1  # include the projectEnd event in the RUN episode
-                    break
-                if t in SOFT_EVENT_TYPES:
-                    soft_indices.append(j)
-                    j += 1
-                    continue
-                # Any other actionful event closes the RUN
-                break
-
-        elif kind == 'CODE':
-            # Extend through more CODE events, absorbing soft events.
-            # Stop on hard pause, RUN start, RESET event, or other actionful event.
-            j = i + 1
-            while j < n:
-                if (j - 1) in hard_pause_after_idx:
-                    break
-                t = events[j].get('event_type', '')
-                if t in CODE_EVENTS:
-                    j += 1
-                    continue
-                if t in SOFT_EVENT_TYPES:
-                    soft_indices.append(j)
-                    j += 1
-                    continue
-                break
-
-        episodes.append({
-            'episode_type': kind,
-            'boundary': boundary_kind(kind),  # all of CODE/RUN/RESET are hard
-            'start_idx': start,
-            'end_idx': j,
-            'start_ts': events[start].get('ts'),
-            'end_ts': events[j - 1].get('ts') if j - 1 < n else None,
-            'event_count': j - start,
-            'soft_indices': soft_indices,
-        })
-        i = j
-
-    return episodes
-
-
-def _detect_inactive_pauses(events: list[dict]) -> list[dict]:
-    """Pass 1: turn long idle gaps into INACTIVE_PAUSE hard boundaries. A gap of
-    at least PAUSE_THRESHOLD_S qualifies. Gaps that are trivially short or absurdly
-    long (> PAUSE_MAX_S, i.e. across sessions) are ignored."""
-    pauses = []
-    for i in range(1, len(events)):
-        prev_ts = events[i - 1].get('ts')
-        curr_ts = events[i].get('ts')
-        if prev_ts is None or curr_ts is None:
-            continue
-        gap = curr_ts - prev_ts
-        if gap <= SHORT_PAUSE_MIN_S or gap > PAUSE_MAX_S:
-            continue
-        if gap >= PAUSE_THRESHOLD_S:
-            pauses.append({
-                'after_idx': i - 1,
-                'duration': gap,
-                'episode_type': 'INACTIVE_PAUSE',
-                'boundary': 'hard',
-            })
-    return pauses
-
-
-def _detect_post_run_pauses(events: list[dict], episodes: list[dict]) -> list[dict]:
-    """Pass 3: catch the "watched it run, then sat there" gap. For each RUN that closed
-    cleanly with projectEnd, skip past the transparent UI events and, if the next real
-    event lands in the (SHORT_PAUSE_MIN_S, PAUSE_THRESHOLD_S) window, mark a
-    POST_RUN_PAUSE."""
-    pauses = []
-    for ep in episodes:
-        if ep['episode_type'] != 'RUN':
-            continue
-        last_idx = ep['end_idx'] - 1
-        if last_idx < 0 or last_idx >= len(events):
-            continue
-        if events[last_idx].get('event_type') != 'projectEnd':
-            continue  # RUN didn't close cleanly
-        j = ep['end_idx']
-        while j < len(events) and events[j].get('event_type', '') in POST_RUN_PAUSE_TRANSPARENT_TYPES:
-            j += 1
-        if j >= len(events):
-            continue
-        end_ts = events[j].get('ts')
-        start_ts = events[last_idx].get('ts')
-        if end_ts is None or start_ts is None:
-            continue
-        gap = end_ts - start_ts
-        if gap <= SHORT_PAUSE_MIN_S or gap >= PAUSE_THRESHOLD_S:
-            continue
-        pauses.append({
-            'after_idx': last_idx,
-            'duration': gap,
-            'episode_type': 'POST_RUN_PAUSE',
-            'boundary': 'hard',
-        })
-    return pauses
-
-
 def segment_session(events: list[dict]) -> tuple[list[dict], list[dict]]:
-    """The one to call. Runs all three passes in order:
+    """The one to call. Three rules decide the result:
 
-    1. Find the long idle gaps (>= PAUSE_THRESHOLD_S), those become INACTIVE_PAUSE hard
-       boundaries.
-    2. Segment the CODE/RUN/RESET episodes, respecting those boundaries and pulling soft
-       events into whatever episode surrounds them.
-    3. Work out POST_RUN_PAUSE for any RUN that ended cleanly on projectEnd and then sat
-       with a gap (> SHORT_PAUSE_MIN_S, < PAUSE_THRESHOLD_S) before the next real event.
+    1. A long idle gap (>= PAUSE_THRESHOLD_S) becomes an INACTIVE_PAUSE hard boundary.
+    2. CODE/RUN/RESET episodes respect those boundaries and pull soft events into
+       whatever episode surrounds them. RESET is a single event, RUN runs until
+       projectEnd (inclusive), and CODE runs through consecutive code events.
+    3. A RUN that ended cleanly on projectEnd and then sat with a gap
+       (> SHORT_PAUSE_MIN_S, < PAUSE_THRESHOLD_S) before the next real event gets a
+       POST_RUN_PAUSE.
 
     Every event needs an 'event_type' (str) and a 'ts' (float seconds, or None). An
     event with no ts still gets segmented, it just can't anchor a pause.
@@ -197,26 +51,22 @@ def segment_session(events: list[dict]) -> tuple[list[dict], list[dict]]:
     Returns (episodes, pauses), pauses sorted by after_idx so a timeline can line them up
     by position.
     """
-    inactive = _detect_inactive_pauses(events)
-    hard_after = {p['after_idx'] for p in inactive}
-    episodes = segment_episodes(events, hard_after)
-    post_run = _detect_post_run_pauses(events, episodes)
-    pauses = sorted(inactive + post_run, key=lambda p: p['after_idx'])
-    return episodes, pauses
+    seg = SessionSegmenter()
+    for event in events:
+        seg.push(event.get('event_type', ''), event.get('ts'))
+    return seg.result()
 
 
 class SessionSegmenter:
     """The incremental form of segment_session for a live host. Push events in
-    order with push(event_type, ts); result() returns the (episodes, pauses) that
-    segment_session would return for every event pushed so far, with indices
-    counted from the first push. Each push does a constant amount of work, so a
+    order with push(event_type, ts). result() returns the (episodes, pauses) for
+    every event pushed so far, with indices counted from the first push. Each push does a constant amount of work, so a
     host no longer re-segments its whole buffer whenever one event arrives.
 
-    It runs the same three passes as segment_session, one event at a time:
-    the gap before each event decides an INACTIVE_PAUSE, the open CODE or RUN
-    episode either absorbs the event or closes, and a RUN that ended on
-    projectEnd waits for the next non-transparent event to decide its
-    POST_RUN_PAUSE.
+    Each event goes through the three rules in turn. The gap before it decides an
+    INACTIVE_PAUSE, the open CODE or RUN episode either absorbs it or closes, and
+    a RUN that ended on projectEnd waits for the next non-transparent event to
+    decide its POST_RUN_PAUSE.
 
     forget_before(index) drops finished episodes and pauses before an index, so
     a long-lived host can keep only a recent window in memory.
@@ -236,7 +86,7 @@ class SessionSegmenter:
         self.count += 1
         et = event_type or ''
 
-        # Pass 1: the gap between the previous event and this one.
+        # Rule 1: the gap between the previous event and this one.
         hard = False
         if i >= 1 and self._prev_ts is not None and ts is not None:
             gap = ts - self._prev_ts
@@ -250,7 +100,7 @@ class SessionSegmenter:
                 hard = True
         self._prev_ts = ts
 
-        # Pass 3: the first non-transparent event after a clean RUN end.
+        # Rule 3: the first non-transparent event after a clean RUN end.
         if et not in POST_RUN_PAUSE_TRANSPARENT_TYPES and self._awaiting:
             for last_idx, last_ts in self._awaiting:
                 if ts is None or last_ts is None:
@@ -266,7 +116,7 @@ class SessionSegmenter:
                 })
             self._awaiting = []
 
-        # Pass 2: extend or close the open episode, same rules as segment_episodes.
+        # Rule 2: extend or close the open episode.
         ep = self._open
         if ep is not None:
             if hard:
@@ -299,7 +149,7 @@ class SessionSegmenter:
             return
         episode = {
             'episode_type': kind,
-            'boundary': boundary_kind(kind),
+            'boundary': 'soft',     # only pauses are hard boundaries
             'start_idx': i,
             'end_idx': i + 1,
             'start_ts': ts,
