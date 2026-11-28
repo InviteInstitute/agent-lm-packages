@@ -38,6 +38,36 @@ HAT_BLOCK_TYPES = frozenset({
 PROCEDURE_DEFINITION = "procedures_definition"
 PROCEDURE_CALL = "procedures_call"
 
+# Labels for statement slots. The main body doesn't need one, the only labeled slot is
+# the second branch of an if/else, so the "then" side and "else" side don't blur.
+STATEMENT_LABELS = {"SUBSTACK2": "else"}
+
+_PLATFORM_PREFIXES = ("pg_", "iq_", "vr_", "aim_", "mixed_")
+
+
+def strip_platform_prefix(block_type):
+    """Drop the noisy VEX platform prefix (pg_, vr_, ...) from a block type."""
+    for prefix in _PLATFORM_PREFIXES:
+        if block_type.startswith(prefix):
+            return block_type[len(prefix):]
+    return block_type
+
+
+def extract_workspace_xml(content):
+    """The workspace XML in a parsed VEX log content dict. The `project` field shows up
+    sometimes as a nested dict and sometimes as a JSON string, so both are handled.
+    Returns "" when there's nothing usable in there."""
+    project = content.get("project", {}) if isinstance(content, dict) else {}
+    if isinstance(project, str):
+        try:
+            project = json.loads(project)
+        except (ValueError, RecursionError):
+            return ""
+    if not isinstance(project, dict):
+        return ""
+    workspace = project.get("workspace")
+    return workspace if isinstance(workspace, str) else ""
+
 
 def strip_namespaces(elem):
     """Drop the `{namespace}` prefix from every tag, in place. VEX workspace XML is

@@ -131,7 +131,7 @@ only when it actually computes a distance, so identical re-runs and cached pairs
 
 ```python
 {"episode_type": "CODE"|"RUN"|"RESET",  # kind of episode
- "boundary":     "hard"|"soft",          # hard boundaries block merging
+ "boundary":     "soft",                 # only pauses are hard boundaries
  "start_idx":    int,                    # inclusive index into events
  "end_idx":      int,                    # exclusive index into events
  "start_ts":     float|None,
@@ -208,6 +208,6 @@ dedupes fires, and a student who never comes back still appears again periodical
 | `distance.py` | `cached_edit_distance`, `compute_edit_distance` | APTED tree-edit distance, VEX cost model, bounded XML-pair memo |
 | `ast_builder.py` | `xml_to_block_ast`, `extract_workspace_xml` | VEX XML into an AST dict |
 | `triggers.py` | `detect_run_triggers[_by_playground]`, `is_inactive`, `detect_inactive_trigger` | all 5 triggers (4 momentary + the inactive DB seam above) |
-| `episodes.py` | `segment_session`, `segment_episodes`, `SessionSegmenter`, `boundary_kind` | session into episodes + pauses (batch and incremental) |
+| `episodes.py` | `segment_session`, `SessionSegmenter` | session into episodes + pauses (batch and incremental) |
 | `switches.py` | `detect_switches` | identity switches (handle re-casing, class-code change) from the live stream |
 | `constants.py` | thresholds + APTED costs | one place for all the tunable numbers |

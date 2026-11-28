@@ -6,8 +6,9 @@ The shape it spits out ({nodes, edges, roots}) is deliberately the same one the
 training pipeline used, so the APTED distance computed here lines up with the
 numbers the model was trained on. Don't change the shape without checking that.
 """
-import json
 import xml.etree.ElementTree as ET
+
+from log_parser_delta_engine.liveness import extract_workspace_xml  # noqa: F401 (public API)
 
 
 def _strip_namespace(elem):
@@ -117,19 +118,3 @@ def root_to_block_ast(root, keep_shadow=False):
         pending.extend(reversed(children_of(block_elem, current_id)))
 
     return {"nodes": nodes, "edges": edges, "roots": roots}
-
-
-def extract_workspace_xml(log_content):
-    """Extract the workspace XML from a parsed log content dict. The `project` field
-    shows up sometimes as a nested dict and sometimes as a JSON string, so both are
-    handled. Returns "" when there's nothing usable in there."""
-    project = log_content.get("project", {}) if isinstance(log_content, dict) else {}
-    if isinstance(project, str):
-        try:
-            project = json.loads(project)
-        except json.JSONDecodeError:
-            return ""
-    if not isinstance(project, dict):
-        return ""
-    workspace = project.get("workspace")
-    return workspace if isinstance(workspace, str) else ""

@@ -5,7 +5,7 @@ between them, as a tree-edit distance.
 Each AST is turned into an APTED tree and run through a VEX-specific cost model
 (see VexConfig below). The result is a whole number. 0 means the two runs are
 identical, and the bigger it gets the more the student rewrote. Every trigger except
-inactive is defined straight off this number, so it's the load-bearing piece.
+inactive is defined straight off this number.
 """
 import hashlib
 import sys

@@ -48,12 +48,11 @@ which renderer it needs.
 
 | Renderer | Audience | What it does |
 |---|---|---|
-| `generate_compact_prompt` (standalone) / `smart_delta_engine.generate_compact_prompt()` (method) | LLM | Makes a token-cheap listing split into `[Active]` (a hat stack or a called My Block) and `[Orphaned]`. Removes noisy `pg_`/`aim_`/`mixed_` prefixes. Does no name lookup. Folds value-slot literals (drive distance, turn degrees) into parent fields. |
+| `generate_compact_prompt` | LLM | Makes a token-cheap listing split into `[Active]` (a hat stack or a called My Block) and `[Orphaned]`. Removes noisy `pg_`/`aim_`/`mixed_` prefixes. Does no name lookup. Folds value-slot literals (drive distance, turn degrees) into parent fields. |
 | `generate_readable_text` / `generate_readable_lines` | Human | Uses full display names from `vex_blocks.json`, infix operators (`A < B`), tidied enums (`fwd` to `forward`), inline reporter values and `else:` branch labels. Shows live stacks first, and orphans after them under `not connected (won't run):`. |
 
-Each renderer also has a `_from_content` variant, for example
-`generate_compact_prompt_from_content`. This variant takes a parsed VEX log content dict and
-extracts the workspace XML internally.
+`generate_compact_prompt_from_project` takes the raw `content.project` value of a VEX log event
+and extracts the workspace XML internally.
 
 Use **compact** when you build an LLM prompt, to spend tokens on structure and not on prose. Use
 **readable** when you show the code to a person.
@@ -76,7 +75,7 @@ Each function reads only what it needs:
 | `detect_run_triggers_by_playground(runs)` | the `runs` list above | `[(trigger_type, run_index, detail)]` |
 | `segment_session(events)` | every event's `event_type` + `ts` (ignores `content`) | `(episodes, pauses)` |
 | `generate_compact_prompt(xml_string)` | one workspace XML string | pseudo-code `str`, or `None` if empty |
-| `generate_compact_prompt_from_content(content)` | parsed VEX log content dict | pseudo-code `str`, or `None` if empty |
+| `generate_compact_prompt_from_project(project)` | the `content.project` value (dict or JSON string) | pseudo-code `str`, or `None` if empty |
 
 The host supplies these events, through an adapter from wherever it stores them. Nothing in this
 repository touches a DB. The one stateful trigger, `inactive`, leaves its two DB touch-points to
@@ -95,7 +94,7 @@ same runs that the batch call produces for the same prefix. See
 
 ```bash
 pip install .                            # Python 3.10+, all three core packages
-python test_smoke.py                     # log parser and learner-model smoke tests
+python -m pytest -q test_smoke.py        # log parser and learner-model smoke tests
 python examples/end_to_end.py            # narrated walkthrough with real output
 python examples/realtime.py              # online goal profiling, event by event
 ```

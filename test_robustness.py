@@ -34,15 +34,26 @@ from learner_models.distance import clear_cache, edit_distance_for, xml_digest
 from learner_models.scoring_ast import scoring_ast
 from log_parser_delta_engine import (
     generate_compact_prompt,
-    generate_compact_prompt_from_content,
+    generate_compact_prompt_from_project,
     generate_readable_lines,
     generate_readable_text,
-    smart_delta_engine,
 )
 
 NS = 'xmlns="https://developers.google.com/blockly/xml"'
 ALL_CHANNELS = {"include_timeline": True, "include_battery": True, "include_rubric": True,
                 "include_rollup": True}
+
+
+def _compact_for(event):
+    """The compact prompt for the project a raw VEX log event carries."""
+    content = event.get("content")
+    if isinstance(content, str):
+        try:
+            content = json.loads(content)
+        except ValueError:
+            return None
+    return generate_compact_prompt_from_project(content.get("project")) \
+        if isinstance(content, dict) else None
 STATUSES = {"profiled", "invalid_input", "unsupported_playground"}
 
 
@@ -112,13 +123,8 @@ def test_raw_session_replays_through_every_package():
     assert [p["episode_type"] for p in pauses if p["episode_type"] == "INACTIVE_PAUSE"] == \
         ["INACTIVE_PAUSE"]
 
-    engine = smart_delta_engine()
-    for e in events:
-        engine.process_log(e)
-    compact = engine.generate_compact_prompt()
+    compact = _compact_for(events[-1])
     assert compact.split("\n[Orphaned]")[0].count("drivetrain_") == 2
-    assert compact == generate_compact_prompt_from_content(json.loads(events[-1]["content"]))
-    assert engine.get_runnable_block_count() == 3
 
     out = goal_profiles_from_events(events, session_id="S1/sess-1",
                                     outcomes_by_run_index={0: {"playground_data": OUTCOME}})
@@ -230,9 +236,6 @@ def test_random_programs_through_every_entry_point(seed):
     compact = generate_compact_prompt(xml)
     assert compact is None or compact.startswith(("[Active]", "[Unrenderable]"))
     assert isinstance(generate_readable_text(xml), str)
-    engine = smart_delta_engine()
-    engine._bootstrap_from_xml(xml)
-    assert engine.get_runnable_block_count() <= engine.get_total_blocks()
     ast = xml_to_block_ast(xml)
     assert {e["target"] for e in ast["edges"]} <= set(ast["nodes"])
     distance = edit_distance_for("<xml/>", xml, xml_to_block_ast("<xml/>"), ast)
@@ -346,9 +349,8 @@ def test_streams_match_batch_on_damaged_sessions(seed):
     for r in batch["runs"]:
         _check_goal_result(r)
 
-    engine = smart_delta_engine()
     for e in events:
-        engine.process_log(e)
+        _compact_for(e)
 
 
 # ---------------------------------------------------------------------------
@@ -403,9 +405,7 @@ def test_hostile_xml_never_raises(name):
     xml = HOSTILE[name]
     lines = generate_readable_lines(xml)
     compact = generate_compact_prompt(xml)
-    engine = smart_delta_engine()
-    engine.process_log({"content": {"project": {"workspace": xml}}})
-    engine.get_runnable_block_count()
+    generate_compact_prompt_from_project({"workspace": xml})
     runs = compute_run_edit_distances(
         [{"event_type": "runProject", "content": {"project": {"workspace": x}}} for x in (xml, xml, W1)])
     assert len(runs["runs"]) == 3

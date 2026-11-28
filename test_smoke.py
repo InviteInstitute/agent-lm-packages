@@ -1,16 +1,14 @@
 """Test suite for log_parser_delta_engine and learner_models.
 
-Run with: python test_smoke.py
+Run with: python -m pytest test_smoke.py
 Requires `apted` (installed automatically with `pip install .`).
 """
 import json
 from datetime import datetime, timedelta, timezone
 
 from log_parser_delta_engine import (
-    generate_compact_prompt, generate_compact_prompt_from_content,
-    generate_compact_prompt_from_project,
+    generate_compact_prompt, generate_compact_prompt_from_project,
     generate_readable_text, generate_readable_lines,
-    smart_delta_engine,
 )
 from log_parser_delta_engine.humanize import ORPHAN_HEADER
 from learner_models import (
@@ -178,15 +176,11 @@ def test_compact_prompt_procedure_called_from_orphan_stays_orphaned():
     assert " procedures_definition (PROC=go)" in orphaned
 
 
-def test_compact_prompt_marks_disabled_and_counts_only_runnable():
+def test_compact_prompt_marks_disabled():
     xml = ws(started(drive("a", 100, turn("off", 90, drive("b", 50), extra='disabled="true"'))))
-    engine = smart_delta_engine()
-    engine.process_log({"content": {"project": {"workspace": xml}}})
-    prompt = engine.generate_compact_prompt()
+    prompt = generate_compact_prompt(xml)
     assert "  drivetrain_turn_for (TURNDIRECTION=right,ANGLE=90) [disabled]" in prompt
     assert "AMOUNT=50" in prompt                  # the block after it still runs
-    assert engine.get_total_blocks() == 4
-    assert engine.get_runnable_block_count() == 3
 
 
 def test_compact_prompt_disabled_hat_is_orphaned():
@@ -206,25 +200,11 @@ def test_compact_prompt_malformed_xml():
     assert generate_compact_prompt("<xml><broken") is None
 
 
-def test_compact_prompt_from_content():
-    content = {"project": {"workspace": SIMPLE_XML}}
-    prompt = generate_compact_prompt_from_content(content)
-    assert prompt is not None
-    assert "events_when_started" in prompt
-
-
-def test_compact_prompt_from_content_json_string():
-    content = {"project": json.dumps({"workspace": SIMPLE_XML})}
-    prompt = generate_compact_prompt_from_content(content)
+def test_compact_prompt_from_project_dict_or_json_string():
+    prompt = generate_compact_prompt_from_project({"workspace": SIMPLE_XML})
     assert prompt is not None
     assert "events_when_started" in prompt
     assert generate_compact_prompt_from_project(json.dumps({"workspace": SIMPLE_XML})) == prompt
-
-
-def test_compact_prompt_from_content_empty():
-    assert generate_compact_prompt_from_content({}) is None
-    assert generate_compact_prompt_from_content({"project": {}}) is None
-    assert generate_compact_prompt_from_content(None) is None
 
 
 # ---------------------------------------------------------------------------
@@ -332,55 +312,15 @@ def test_readable_marks_disabled_blocks():
     assert generate_readable_lines(xml)[-1] == "turn for right, angle 90 (disabled)"
 
 
-# ---------------------------------------------------------------------------
-# log_parser_delta_engine: event stream
-# ---------------------------------------------------------------------------
-def _vex_event(event_type, workspace, block_event=None):
-    """The shape of a real VEX log event: the full project rides on every block
-    event, as a JSON string, next to a thin blockEventData delta."""
-    content = {"eventType": event_type,
-               "project": json.dumps({"mode": "Blocks", "workspace": workspace})}
-    if block_event is not None:
-        content["blockEventData"] = json.dumps(block_event)
-    return {"content": json.dumps(content)}
-
-
-def test_process_log_rebuilds_from_the_event_snapshot():
-    engine = smart_delta_engine()
-    # A session starts from a workspace the stream never saw being built.
-    engine.process_log(_vex_event("blockCreated", ws(started(), turn("t", 90)),
-                                  {"eventType": "create", "blockID": "t",
-                                   "blockType": "pg_drivetrain_turn_for"}))
-    assert engine.orphan_status["t"] is True
-    # Real moves name the new parent but not the slot; the snapshot has the answer.
-    engine.process_log(_vex_event("blockMoved", ws(started(turn("t", 90))),
-                                  {"eventType": "move", "blockID": "t",
-                                   "newInfo": {"parent": "hat"}}))
-    assert engine.orphan_status["t"] is False
-    assert engine.get_runnable_block_count() == 2
-    # Real changes carry fieldName, and shadows never get a create event.
-    engine.process_log(_vex_event("blockChanged", ws(started(turn("t", 45))),
-                                  {"eventType": "change", "blockID": "shadow",
-                                   "blockType": "math_number", "fieldName": "NUM",
-                                   "oldValue": 90, "newValue": 45}))
-    assert engine.blocks["t"]["fields"]["ANGLE"] == "45"
-    engine.process_log(_vex_event("blockDeleted", ws(started()),
-                                  {"eventType": "delete", "blockID": "t"}))
-    assert "t" not in engine.blocks and engine.get_total_blocks() == 1
-
-
-def test_process_log_accepts_dict_content_and_ignores_events_without_a_project():
-    engine = smart_delta_engine()
-    engine.process_log({"content": {"eventType": "runProject",
-                                    "project": {"workspace": RICH_XML}}})
-    assert engine.get_runnable_block_count() == 3
-    engine.process_log({"content": json.dumps({"eventType": "playgroundReset"})})
-    engine.process_log({"content": "not json"})
-    engine.process_log({})
-    assert engine.get_runnable_block_count() == 3
-    engine.process_log({"content": {"eventType": "newProject", "project": {"workspace": ""}}})
-    assert engine.blocks == {} and engine.generate_compact_prompt() == \
-        "[Active]\n (empty)\n[Orphaned]\n (empty)"
+def test_compact_prompt_follows_the_event_snapshot():
+    # Real moves name the new parent but not the slot, and shadows never get a
+    # create event. The project snapshot each event carries has the answer.
+    _, orphaned = sections(generate_compact_prompt(ws(started(), turn("t", 90))))
+    assert " drivetrain_turn_for (TURNDIRECTION=right,ANGLE=90)" in orphaned
+    active, _ = sections(generate_compact_prompt(ws(started(turn("t", 45)))))
+    assert "  drivetrain_turn_for (TURNDIRECTION=right,ANGLE=45)" in active
+    assert generate_compact_prompt(ws(started(), ns=False)) == \
+        "[Active]\n events_when_started\n[Orphaned]\n (empty)"
 
 
 # ---------------------------------------------------------------------------
@@ -520,9 +460,6 @@ def test_duplicate_block_ids_terminate():
     from learner_models.distance import compute_edit_distance
     assert len(xml_to_block_ast(DUP_IDS)["nodes"]) == 3
     assert compute_edit_distance(xml_to_block_ast(DUP_IDS), xml_to_block_ast(ws())) == 3
-    engine = smart_delta_engine()
-    engine._bootstrap_from_xml(DUP_IDS)
-    assert engine.get_runnable_block_count() == 3
     assert "forever" in generate_compact_prompt(DUP_IDS)
 
 
@@ -533,12 +470,9 @@ def test_bad_workspaces_do_not_raise_or_drop_runs():
     events = [{"event_type": "runProject", "content": {"project": {"workspace": w}}}
               for w in bad] + [{"event_type": "runProject", "content": "[1, 2]"}]
     assert len(compute_run_edit_distances(events)["runs"]) == len(events)
-    for event in events:
-        smart_delta_engine().process_log(event)
+    for workspace in bad:
+        generate_compact_prompt_from_project({"workspace": workspace})
     assert generate_readable_text(bad[0]) == "" and generate_compact_prompt(bad[0]) is None
-    engine = smart_delta_engine()
-    engine._bootstrap_from_xml(ws('<block type="pg_events_when_started" id="h" x="12px"/>'))
-    assert engine.blocks["h"]["x"] is None
 
 
 # ---------------------------------------------------------------------------
@@ -602,6 +536,7 @@ def test_compact_prompt_from_project_empty():
     assert generate_compact_prompt_from_project(None) is None
     assert generate_compact_prompt_from_project({}) is None
     assert generate_compact_prompt_from_project({"workspace": ""}) is None
+    assert generate_compact_prompt_from_project("not json") is None
 
 
 # ---------------------------------------------------------------------------
@@ -624,26 +559,6 @@ def test_switches_none_when_unchanged_or_missing():
     assert detect_switches("", "", "cobra3", "FPFVDH") == []      # empty prior is not a switch
 
 
-# ---------------------------------------------------------------------------
-# Runner
-# ---------------------------------------------------------------------------
-ALL_TESTS = [
-    v for k, v in sorted(globals().items())
-    if k.startswith("test_") and callable(v)
-]
-
-
-if __name__ == "__main__":
-    passed = 0
-    failed = 0
-    for test in ALL_TESTS:
-        try:
-            test()
-            print(f"  PASS  {test.__name__}")
-            passed += 1
-        except Exception as e:
-            print(f"  FAIL  {test.__name__}: {e}")
-            failed += 1
-    print(f"\n{passed} passed, {failed} failed, {len(ALL_TESTS)} total")
-    if failed:
-        exit(1)
+def test_both_renderers_strip_the_same_platform_prefixes():
+    xml = ws(started('<block type="vr_control_wait" id="w"/>'))
+    assert "  control_wait" in generate_compact_prompt(xml).split("\n")

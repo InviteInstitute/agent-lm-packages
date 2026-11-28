@@ -33,12 +33,14 @@ import xml.etree.ElementTree as ET
 from .liveness import (
     PROCEDURE_CALL,
     PROCEDURE_DEFINITION,
+    STATEMENT_LABELS,
     child_block,
     is_disabled,
     next_block,
     procedure_label,
     split_stacks,
     strip_namespaces,
+    strip_platform_prefix,
     value_input,
 )
 
@@ -58,7 +60,7 @@ except (OSError, ValueError):
 
 # A few fixes so enum fields read like words instead of tokens. Anything not
 # listed passes straight through. The goal is "name + params", not real English.
-_ENUM = {"fwd": "forward", "rev": "reverse", "pct": "%", "and": "and", "or": "or"}
+_ENUM = {"fwd": "forward", "rev": "reverse", "pct": "%"}
 
 # Operators that read best infix: type -> (operator field, [operand value slots]).
 _INFIX = {
@@ -67,24 +69,13 @@ _INFIX = {
     "pg_operator_math": ("MATH", ["NUM1", "NUM2"]),
 }
 
-# Labels for statement slots. The main body doesn't need one, the only labeled slot
-# is the second branch of an if/else, so the "then" side and "else" side don't blur.
-_STMT_LABEL = {"SUBSTACK2": "else"}
-
 # Heads the section of stacks that can never run.
 ORPHAN_HEADER = "not connected (won't run):"
-
-_PLATFORM_PREFIXES = ("pg_", "iq_", "vr_", "aim_", "mixed_")
-
 
 def _name(t):
     if t in _NAMES:
         return _NAMES[t]
-    for prefix in _PLATFORM_PREFIXES:
-        if t.startswith(prefix):
-            t = t[len(prefix):]
-            break
-    return t.replace("_", " ")
+    return strip_platform_prefix(t).replace("_", " ")
 
 
 def _tidy(v):
@@ -192,7 +183,7 @@ def _walk(block, depth, out):
                 body = child_block(child)
                 if body is None:
                     continue
-                label = _STMT_LABEL.get(child.attrib.get("name"))
+                label = STATEMENT_LABELS.get(child.attrib.get("name"))
                 if label:
                     out.append("  " * depth + label + ":")
                 _walk(body, depth + 1, out)
@@ -248,50 +239,3 @@ def generate_readable_text(xml_string):
     there's nothing to show."""
     return "\n".join(generate_readable_lines(xml_string))
 
-
-if __name__ == "__main__":
-    # Quick self-check so the recursion, infix rendering and live/orphan split can't
-    # quietly break. Covers a literal number, an if/else, a deeply nested condition,
-    # a reporter covering a shadow default, a called My Block, a disabled block and a
-    # loose stack.
-    demo = (
-        '<xml xmlns="https://developers.google.com/blockly/xml">'
-        '<block type="pg_events_when_started"><next>'
-        '  <block type="pg_drivetrain_drive_for">'
-        '    <field name="DIRECTION">fwd</field><field name="UNITS">mm</field>'
-        '    <field name="anddontwait_mutator">false</field>'
-        '    <value name="AMOUNT"><shadow type="math_number"><field name="NUM">200</field></shadow></value>'
-        '  <next>'
-        '    <block type="pg_control_if_then_else">'
-        '      <value name="CONDITION"><block type="pg_operator_not"><value name="OPERAND">'
-        '        <block type="pg_operator_and_or"><field name="CHECK">and</field>'
-        '          <value name="OPERAND1"><block type="pg_operator_comparison"><field name="COMPARISON">&lt;</field>'
-        '            <value name="NUM1"><shadow type="math_number"><field name="NUM">0</field></shadow>'
-        '              <block type="pg_sensing_distance_distance"><field name="DISTANCE">frontdistance</field></block></value>'
-        '            <value name="NUM2"><shadow type="math_number"><field name="NUM">200</field></shadow></value></block></value>'
-        '          <value name="OPERAND2"><block type="pg_sensing_optical_near_object"><field name="OPTICAL">fronteye</field></block></value>'
-        '        </block></value></block></value>'
-        '      <statement name="SUBSTACK"><block type="pg_drivetrain_drive"><field name="DIRECTION">fwd</field></block></statement>'
-        '      <statement name="SUBSTACK2"><block type="pg_drivetrain_stop_driving"/></statement>'
-        '    <next><block type="procedures_call"><mutation xmlns="http://www.w3.org/1999/xhtml" proccode="wiggle"/>'
-        '      <next><block type="pg_drivetrain_stop_driving" disabled="true"/></next></block></next>'
-        '    </block></next></block>'
-        '</next></block>'
-        '<block type="procedures_definition"><statement name="custom_block">'
-        '  <shadow type="procedures_prototype"><mutation xmlns="http://www.w3.org/1999/xhtml" proccode="wiggle"/></shadow>'
-        '</statement><next><block type="pg_drivetrain_turn"><field name="TURNDIRECTION">right</field></block></next></block>'
-        '<block type="pg_events_broadcast"><field name="BROADCAST_OPTION">go</field></block>'
-        '</xml>'
-    )
-    lines = generate_readable_lines(demo)
-    print("\n".join(lines))
-    assert any("200" in ln for ln in lines), "value-slot number was dropped"
-    assert any("else:" == ln.strip() for ln in lines), "if/else branch not labeled"
-    assert any("not (" in ln and "and" in ln and "< 200" in ln for ln in lines), \
-        "nested condition not rendered"
-    assert not any("(0 <" in ln for ln in lines), "shadow default shown over a reporter"
-    assert "call wiggle" in lines and "define wiggle" in lines, "My Block not named"
-    assert any(ln.endswith("(disabled)") for ln in lines), "disabled block not marked"
-    orphans = lines[lines.index(ORPHAN_HEADER) + 1:]
-    assert orphans == ["  broadcast event go"], "loose broadcast not orphaned"
-    print("\nself-check OK")

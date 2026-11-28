@@ -174,7 +174,7 @@ Use `--help` for playground, config, scheduler and input options. Each sweep res
 
 ```bash
 python -m pip install '.[dev]'
-python test_smoke.py
+python -m pytest -q test_smoke.py
 python examples/end_to_end.py
 python examples/realtime.py
 python -m pytest -q -m 'not corpus'
