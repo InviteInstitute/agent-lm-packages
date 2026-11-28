@@ -14,7 +14,6 @@ import xml.etree.ElementTree as ET
 
 import pytest
 
-from goal_strategy.detector.parsing.block_program import HAT_BLOCK_TYPES
 from goal_strategy.detector.parsing.parse_blocks import parse_workspace
 from goal_strategy.execution import prepare_execution
 from goal_strategy.profile import profile
@@ -66,10 +65,6 @@ def _code_indicators(xml):
 
 
 # ---------------------------------------------------------------- hats
-
-def test_hat_set_is_shared_with_the_log_parser():
-    assert HAT_BLOCK_TYPES == liveness.HAT_BLOCK_TYPES
-
 
 @pytest.mark.parametrize("loose_type", ["pg_events_broadcast", "pg_events_broadcast_and_wait"])
 def test_loose_broadcast_stack_is_an_orphan_and_changes_no_score(loose_type):

@@ -26,7 +26,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from .detector.parsing.block_program import procedure_name
+from .detector.parsing.block_program import _dfs, procedure_name
 
 _SENSING_PREFIXES = ("pg_sensing_",)
 _SENSING_HATS = ("pg_events_optical_detect_object", "pg_events_when_bumper")
@@ -101,20 +101,6 @@ class CodeEvidence:
 
 def _is_sensing(bt: str) -> bool:
     return bt.startswith(_SENSING_PREFIXES) or bt in _SENSING_HATS
-
-
-def _walk(node):
-    """Pre-order: a block, its statement bodies, its value inputs, then the next
-    block. Iterative, so neither a long sequence nor deep nesting costs stack."""
-    pending = [node]
-    while pending:
-        cur = pending.pop()
-        if cur is None:
-            continue
-        yield cur
-        pending.append(cur.next)
-        pending.extend(reversed(cur.values))
-        pending.extend(reversed(cur.children))
 
 
 def _subtree_has_sensing(node) -> bool:
@@ -246,7 +232,7 @@ def calibration_audit(program, geometry_mm: "list[float]",
         dead = statically_dead_ids(program)
     lits = []
     for root in program.live_stacks:
-        for b in _walk(root):
+        for b in _dfs(root):
             if b.block_type in _MOTION_PARAM_BLOCKS[:2]:   # drive_for/turn_for? distances only
                 if b.block_type != "pg_drivetrain_drive_for":
                     continue
@@ -348,7 +334,7 @@ def fixed_motion_vocabulary(program, dead: set | None = None) -> dict:
         dead = statically_dead_ids(program)
     drives, turns = [], []
     for root in program.live_stacks:
-        for b in _walk(root):
+        for b in _dfs(root):
             if b.block_type not in ("pg_drivetrain_drive_for",
                                     "pg_drivetrain_turn_for"):
                 continue
@@ -495,7 +481,7 @@ def code_evidence(program, sim) -> CodeEvidence:
     # chains are out (trace-derived facts are unaffected: dead blocks
     # never appear in a trace anyway).
     _dead = statically_dead_ids(program)
-    blocks = [b for root in executable for b in _walk(root)
+    blocks = [b for root in executable for b in _dfs(root)
               if b.block_id not in _dead]
     by_id = {b.block_id: b for b in blocks}
     ancestry = _Ancestry(_call_sites(program, blocks))
@@ -619,7 +605,7 @@ def code_evidence(program, sim) -> CodeEvidence:
         """The node's statement bodies, recursively (not values/siblings
         of the node itself)."""
         for child in node.children:
-            yield from _walk(child)
+            yield from _dfs(child)
 
     state_events = 0
     # (a) wait releases followed by motion
@@ -655,7 +641,7 @@ def code_evidence(program, sim) -> CodeEvidence:
     for hat_id, steps in hats_fired.items():
         root = by_id.get(hat_id)
         if root is not None and any(
-                x.block_type.startswith(_MOTION_PREFIX) for x in _walk(root)):
+                x.block_type.startswith(_MOTION_PREFIX) for x in _dfs(root)):
             state_events += len(steps) if hasattr(steps, "__len__") else int(steps)
     total = len(motion_execs) + state_events
     fraction = (state_events / total) if total else None
@@ -807,3 +793,57 @@ def code_evidence(program, sim) -> CodeEvidence:
         variable_metrics=variable_metrics,
         duplicated_sequence_count=dup_sequences,
     )
+
+
+# Columns of stage2_code_evidence.csv, the production-side rubric evidence. The
+# offline rung sweep writes these rows and the online rubric channel builds the
+# same row, so both feed combine_run identical values.
+CODE_EVIDENCE_HEADER = [
+    "run_id", "config_version",
+    "sensing_in_executable", "sensing_in_recurrent",
+    "has_loops", "has_conditionals", "has_procedures", "has_variables",
+    "ceilings", "max_arm_alternations", "coordination_relations",
+    "coordination_detail", "wait_release_total",
+    "state_terminated_motion_fraction",
+    "exercised_loops_fixed", "exercised_loops_state", "exercised_loops_forever",
+    "exercised_conditionals", "max_nesting_depth", "state_controlled_termination",
+    "state_gated_drivetrain", "computed_motion_params",
+    "procedure_calls", "procedure_reused", "variable_sets", "variable_reads",
+    "duplicated_sequences", "calibrated_param_matches", "motion_literal_count",
+    # SMC lower scale: one ordinal indicator plus its vocabulary diagnostics
+    # and the route-A contamination annotation.
+    "fixed_motion_specificity", "distinct_drive_clusters", "distinct_turn_clusters",
+    "canonical_prop", "fine_value_count", "canonical_ambiguous_matches",
+    # Executed state-gating is the SMC-2 scoring variant, and the sensor-field
+    # list is the mis-wired-sensor diagnostic.
+    "state_gated_drivetrain_executed", "gated_sensor_fields",
+]
+
+
+def code_evidence_row(ce: CodeEvidence, program, run_id: str, config_version: str,
+                      geometry_mm, tolerance_pct: float, palette: dict,
+                      spec_rule: dict) -> dict:
+    """One stage2_code_evidence row, keyed by CODE_EVIDENCE_HEADER."""
+    values = [
+        run_id, config_version,
+        ce.sensing_in_executable, ce.sensing_in_recurrent,
+        ce.has_loops, ce.has_conditionals, ce.has_procedures, ce.has_variables,
+        ";".join(f"{k}:{v}" for k, v in sorted(ce.ceilings.items())),
+        ce.max_arm_alternations, ce.construct_coordination_relations,
+        "|".join(ce.coordination_detail), sum(ce.wait_release_counts.values()),
+        ("" if ce.state_terminated_motion_fraction is None
+         else round(ce.state_terminated_motion_fraction, 3)),
+        ce.exercised_loops_fixed, ce.exercised_loops_state,
+        ce.exercised_loops_forever, ce.exercised_conditional_count,
+        ce.max_nesting_depth, ce.state_controlled_termination,
+        ce.state_gated_drivetrain_count, ce.computed_motion_param_count,
+        ce.procedure_metrics.get("calls", 0),
+        ce.procedure_metrics.get("reused", 0),
+        ce.variable_metrics.get("sets", 0),
+        ce.variable_metrics.get("reads", 0),
+        ce.duplicated_sequence_count,
+        *calibration_audit(program, geometry_mm, tolerance_pct),
+        *smc_lower_columns(program, geometry_mm, tolerance_pct, palette, spec_rule),
+        ce.state_gated_drivetrain_executed, ";".join(ce.gated_sensor_fields),
+    ]
+    return dict(zip(CODE_EVIDENCE_HEADER, values))

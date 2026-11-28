@@ -6,12 +6,11 @@ import functools
 import hashlib
 import json
 import math
-import os
 import threading
 from collections import OrderedDict
 
 from .config import ConfigError, configs_root, load_configs, register_config_cache_clearer
-from .execution import prepare_execution
+from .execution import conditional_hat_treatment, prepare_execution
 from .profile import _profile
 from .serialize import PIPELINE_VERSION, SCHEMA_VERSION, profile_to_dict, to_dict
 
@@ -60,22 +59,8 @@ def _canonical_playground(name):
     if not isinstance(name, str):
         return None
     # Aliases are derived from each card, so new playgrounds can be added in YAML.
-    root = configs_root()
-    try:
-        return _alias_to_canonical(root).get(name)
-    except ConfigError:
-        # A malformed card in the directory: fall back to the original lazy scan,
-        # which raises or resolves depending on where `name` falls in sort order.
-        return _canonical_playground_scan(name, root)
-
-
-def _canonical_playground_scan(name, root):
-    for path in sorted(root.joinpath('playgrounds').iterdir(), key=lambda p: p.name):
-        if path.name.endswith('.yaml'):
-            canonical = path.name[:-5]
-            if name in _card_aliases(load_configs(canonical), canonical):
-                return canonical
-    return None
+    # A malformed card raises ConfigError, a deployment fault like any other.
+    return _alias_to_canonical(configs_root()).get(name)
 
 
 def _params(value, canonical, end_status, diagnostics):
@@ -103,7 +88,7 @@ def _params(value, canonical, end_status, diagnostics):
 # deterministic function of everything BELOW keyed here; identical re-runs
 # (wheel-spinning) hit, and program_id is re-stamped per call. The key omits
 # program_id and includes the config source + conditional-hat treatment, and the
-# cache is dropped by load_configs.cache_clear() so in-place card edits stay honest.
+# cache is dropped by load_configs.cache_clear() so in-place card edits take effect.
 _RESULT_CACHE: "OrderedDict[tuple, dict]" = OrderedDict()
 _RESULT_CACHE_MAX = 256
 # The other caches use functools.lru_cache (internally locked); this manual LRU
@@ -135,9 +120,7 @@ def _restamp_program_id(obj, program_id):
 
 def _result_cache_key(xml, playground, params, diagnostics, include_timeline,
                       include_battery, include_rubric, include_rollup):
-    treatment = (os.environ.get("GOAL_STRATEGY_CONDITIONAL_HATS")
-                 or os.environ.get("VEX_GOAL_PROFILES_CONDITIONAL_HATS")
-                 or "execute").lower()
+    treatment = conditional_hat_treatment()
     try:
         params_key = json.dumps(params, sort_keys=True, default=str)
     except (TypeError, ValueError):

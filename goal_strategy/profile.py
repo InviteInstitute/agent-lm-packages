@@ -15,7 +15,7 @@ from goal_strategy.detector.simulation.simulate_path import (
 )
 
 from .config import GoalSpec, IndicatorSpec
-from .indicators import REGISTRY, EvalContext, IndicatorResult
+from .indicators import REGISTRY, EvalContext, IndicatorResult, _segment_closest
 
 
 @dataclass
@@ -330,13 +330,8 @@ def _on_island(x: float, y: float, polygon: Sequence[Sequence[float]],
     if tolerance <= 0:
         return False
     n = len(polygon)
-    best = math.inf
-    for i in range(n):
-        x0, y0 = polygon[i]
-        x1, y1 = polygon[(i + 1) % n]
-        dx, dy = x1 - x0, y1 - y0
-        t = max(0.0, min(1.0, ((x - x0) * dx + (y - y0) * dy) / (dx * dx + dy * dy)))
-        best = min(best, math.hypot(x - (x0 + t * dx), y - (y0 + t * dy)))
+    best = min(_segment_closest(*polygon[i], *polygon[(i + 1) % n], x, y)[0]
+               for i in range(n))
     return best <= tolerance
 
 

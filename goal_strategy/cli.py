@@ -21,9 +21,8 @@ from .serialize import PIPELINE_VERSION
 
 
 def _load_programs(parquet_path: str, playground: str = "castle_crashers", configs_dir=None):
-    """One row per student session. Same program_id join rule as tests/helpers.py
-    (intentional small duplication — helpers.py is test-only and not shipped).
-    Wrong-playground sessions are excluded per the card's corpus_filter
+    """One row per student session, keyed by the frozen_paths program_id join
+    rule. The test corpus fixtures load through here too. Wrong-playground sessions are excluded per the card's corpus_filter
     (reviewer decision, 2026-08-18)."""
     from .config import load_configs
     required = (load_configs(playground, configs_dir).card.get("corpus_filter") or {}) \
@@ -51,7 +50,7 @@ def main(argv: list[str] | None = None) -> int:
                         help="disable §6a boundary truncation (design-analysis scope)")
     parser.add_argument("--conditional-hats", default=None,
                         choices=["execute", "suppress", "abstain"],
-                        help="task-3 Part B treatment (default: execute = status quo)")
+                        help="conditional-hat treatment (default: execute)")
     args = parser.parse_args(argv)
 
     rows = []

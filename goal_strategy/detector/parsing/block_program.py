@@ -14,8 +14,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from log_parser_delta_engine.liveness import HAT_BLOCK_TYPES
+
 from .block_registry import (
-    EVENT_BLOCK_TYPES,
     MAGNET_BLOCK_TYPES,  # noqa: F401 (re-exported for the simulator)
     classify as _registry_classify,
 )
@@ -91,13 +92,6 @@ class BlockNode:
 # ------------------------------------------------------------------ #
 # Block type classification helpers
 # ------------------------------------------------------------------ #
-
-# Hat blocks: the only top-level blocks that start a program. This is exactly
-# the registry's `event` class. It is an explicit list on purpose: a prefix test
-# like "pg_events_" also matches broadcast / broadcast-and-wait, which are
-# ordinary stack blocks, and made a detached broadcast stack run as live code.
-HAT_BLOCK_TYPES: frozenset[str] = EVENT_BLOCK_TYPES
-
 
 def classify_block(block_type: str) -> str:
     """Return a coarse category string for a block type.

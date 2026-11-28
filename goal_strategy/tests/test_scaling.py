@@ -9,8 +9,9 @@ import pytest
 from goal_strategy import GoalProfileStream
 from goal_strategy.detector.parsing.parse_blocks import parse_workspace
 from goal_strategy.detector.simulation.simulate_path import slice_sim_result, simulate_path
+from goal_strategy.detector.parsing.block_program import _dfs
 from goal_strategy.rubric_evidence import (
-    _Ancestry, _call_sites, _is_body, _is_loop, _walk, code_evidence,
+    _Ancestry, _call_sites, _is_body, _is_loop, code_evidence,
 )
 from goal_strategy.tests.test_oi23_builds import MUT
 from goal_strategy.tests.test_rubric_evidence import _ctx, _ev
@@ -108,7 +109,7 @@ def _reference_first(node, sites, pred):
 @pytest.mark.parametrize("levels,fanout", [(1, 1), (2, 2), (3, 3), (4, 2)])
 def test_ancestry_matches_path_enumeration(levels, fanout):
     program = parse_workspace(_nested_my_blocks(levels, fanout), "anc")
-    blocks = [b for root in program.live_stacks for b in _walk(root)]
+    blocks = [b for root in program.live_stacks for b in _dfs(root)]
     sites = _call_sites(program, blocks)
     ancestry = _Ancestry(sites)
     for b in blocks:
@@ -123,7 +124,7 @@ def test_recursive_my_blocks_terminate():
             _definition("a", "da", _chain([_repeat("ra", _chain([_call("b", "cb")]))])),
             _definition("b", "db", _chain([_call("a", "cba"), _drive("leaf")]))]
     program = parse_workspace(f"<xml {NS}>" + "".join(tops) + "</xml>", "rec")
-    blocks = [b for root in program.live_stacks for b in _walk(root)]
+    blocks = [b for root in program.live_stacks for b in _dfs(root)]
     sites = _call_sites(program, blocks)
     ancestry = _Ancestry(sites)
     for b in blocks:

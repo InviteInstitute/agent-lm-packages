@@ -20,7 +20,7 @@ python -m pip install .
 python -m pip install '.[goal-strategy-analysis]'  # parquet/batch tools
 ```
 
-The distribution also installs the existing log parser and learner-model packages. The import of `goal_strategy` does not import those packages or their APTED dependency.
+The distribution also installs the existing log parser and learner-model packages. `goal_strategy` takes its hat set and disabled-block rule from `log_parser_delta_engine.liveness`, which is stdlib only. It does not import `learner_models` or APTED.
 
 ## Profile one program
 
@@ -137,10 +137,9 @@ The bundled cards and the detector CSV ship in the wheel. The configuration prec
 
 1. Explicit `configs_dir` on typed or internal tools
 2. `GOAL_STRATEGY_CONFIG_DIR`
-3. Legacy `VEX_GOAL_PROFILES_CONFIG_DIR`
-4. Bundled cards
+3. Bundled cards
 
-Conditional hats accept `GOAL_STRATEGY_CONDITIONAL_HATS` and its legacy `VEX_GOAL_PROFILES_CONDITIONAL_HATS` alias. Each request gets its own copy of the cached configuration, for isolation. The cache also holds the playground alias resolution, and `load_configs.cache_clear()` drops both. Call that function, or restart, after you edit external cards.
+`GOAL_STRATEGY_CONDITIONAL_HATS` sets the conditional-hat treatment. Each request gets its own copy of the cached configuration, for isolation. The cache also holds the playground alias resolution, and `load_configs.cache_clear()` drops both. Call that function, or restart, after you edit external cards.
 
 Core profiling needs no dataset. Offline tools use explicit file paths or `GOAL_STRATEGY_DATA_DIR`. For a checkout, the convenience path is `data/goal_strategy/`, relative to the working directory. If an input is missing, the tool explains how to configure a data directory. Keep the existing structure:
 

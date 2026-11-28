@@ -44,6 +44,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import Optional
 
+from goal_strategy.detector.parsing.block_program import _dfs
 from goal_strategy.detector.parsing.parse_blocks import parse_workspace
 from goal_strategy.detector.simulation.simulate_path import (
     PlaygroundContext, _point_in_convex_polygon, _point_segment_dist,
@@ -52,7 +53,7 @@ from goal_strategy.detector.simulation.simulate_path import (
 
 from .config import ConfigError, _load_yaml, configs_root, load_configs
 from .paths import data_path, require_data
-from .indicators import _segment_closest
+from .indicators import _polyline_min_distance
 
 # Block types whose information the main sim cannot fully evidence — code
 # consulting these qualifies for the battery. Down-eye color (red line) is
@@ -161,16 +162,6 @@ _CHECK_RULES = frozenset({
 })
 
 
-def _iter_blocks(node):
-    while node is not None:
-        yield node
-        for child in node.children:
-            yield from _iter_blocks(child)
-        for value in node.values:
-            yield from _iter_blocks(value)
-        node = node.next
-
-
 def _constructs(program) -> list[dict]:
     """Qualifying sensing constructs as instances: reporters (materialization
     timed by the baseline's first-evaluation trace) and hats (armed from step
@@ -183,7 +174,7 @@ def _constructs(program) -> list[dict]:
             seen.add(root.block_id)
             out.append({"id": root.block_id, "block_type": root.block_type,
                         "kind": "hat"})
-        for block in _iter_blocks(root):
+        for block in _dfs(root):
             bt = block.block_type
             if block.block_id in seen:
                 continue
@@ -202,7 +193,7 @@ def _constructs(program) -> list[dict]:
 def qualifying_blocks(program) -> list[str]:
     found = []
     for root in program.live_stacks:
-        for block in _iter_blocks(root):
+        for block in _dfs(root):
             bt = block.block_type
             if bt in found:
                 continue
@@ -210,7 +201,7 @@ def qualifying_blocks(program) -> list[str]:
                     any(bt.startswith(p) for p in _SENSOR_QUALIFIER_PREFIXES):
                 found.append(bt)
     for root in program.live_stacks:
-        for block in _iter_blocks(root):
+        for block in _dfs(root):
             if block.block_type in ("pg_sensing_optical_color",
                                     "pg_sensing_optical_detected_color_is"):
                 eye = (block.get_field("OPTICAL") or "").lower()
@@ -338,13 +329,7 @@ def _path_divergence(sim_a, sim_b, polygon=None,
 
 def _continuous_min_distance(sim, px: float, py: float) -> float:
     pts = [(sim.origin_x, sim.origin_y)] + [(p.x, p.y) for p in sim.path]
-    best = float("inf")
-    for (ax, ay), (bx, by) in zip(pts, pts[1:]):
-        d, _, _ = _segment_closest(ax, ay, bx, by, px, py)
-        best = min(best, d)
-    if pts:
-        best = min(best, math.hypot(pts[0][0] - px, pts[0][1] - py))
-    return best
+    return _polyline_min_distance(pts, px, py)
 
 
 def _distance_trend_improving(sim, px: float, py: float) -> bool:
@@ -610,7 +595,7 @@ def downeye_only_sensing(program) -> bool:
     if qualifying_blocks(program):
         return False
     for root in program.live_stacks:
-        for block in _iter_blocks(root):
+        for block in _dfs(root):
             if block.block_type in ("pg_sensing_optical_color",
                                     "pg_sensing_optical_detected_color_is"):
                 if "down" in (block.get_field("OPTICAL") or "").lower():

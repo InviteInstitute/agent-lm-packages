@@ -23,16 +23,18 @@ class Execution:
     boundary_exit_overridden: bool
 
 
+def conditional_hat_treatment(explicit=None):
+    """The conditional-hat treatment, from the caller or GOAL_STRATEGY_CONDITIONAL_HATS."""
+    return (explicit or os.environ.get("GOAL_STRATEGY_CONDITIONAL_HATS") or "execute").lower()
+
+
 def prepare_execution(workspace_xml, program_id, playground_params=None,
                       playground="castle_crashers", truncate=True, configs_dir=None,
                       conditional_hats=None, scheduler=None,
                       run_duration_s=None, duration_imputed=False):
     from .profile import _find_boundary_exit, _fall_off_tolerance, _on_island
     cfg = load_configs(playground, configs_dir)
-    treatment = (conditional_hats
-                 or os.environ.get("GOAL_STRATEGY_CONDITIONAL_HATS")
-                 or os.environ.get("VEX_GOAL_PROFILES_CONDITIONAL_HATS")
-                 or "execute").lower()
+    treatment = conditional_hat_treatment(conditional_hats)
 
     program = parse_workspace(workspace_xml or "", program_id)
     code_facts = extract_code_facts(program, cfg.block_families) if program else None

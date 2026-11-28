@@ -176,10 +176,9 @@ def _config_version(playground_card: dict, goals_card: dict, robot_card: dict,
 
 
 def resolve_capability(block_type: str, capabilities: dict) -> dict:
-    """D2 layer-1 lookup: explicit entry > longest family prefix > unknown
-    default. Returns the entry dict ({class, flag?, ...}); the unknown
-    default guarantees a named flag for anything unrecognized — never a
-    crash, never silence."""
+    """Capability lookup: explicit entry, then the longest family prefix, then
+    the unknown default. Returns the entry dict ({class, flag?, ...}). The
+    unknown default gives anything unrecognized a named flag."""
     entry = (capabilities.get("blocks") or {}).get(block_type)
     if entry:
         return entry
@@ -205,7 +204,7 @@ def _load_yaml(path: Path) -> dict:
 
 
 def configs_root(configs_dir=None):
-    value = configs_dir or os.environ.get("GOAL_STRATEGY_CONFIG_DIR") or os.environ.get("VEX_GOAL_PROFILES_CONFIG_DIR")
+    value = configs_dir or os.environ.get("GOAL_STRATEGY_CONFIG_DIR")
     return Path(value).expanduser().resolve() if value else _DEFAULT_CONFIGS_DIR
 
 
