@@ -1,6 +1,5 @@
 """Per-registry-function tests on hand-built simulator fixtures: abstention reasons,
 continuous values, origin seeding, latch semantics, zone flags, fallback flags."""
-import math
 
 import pytest
 

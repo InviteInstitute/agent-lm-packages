@@ -6,6 +6,9 @@ do not tune rungs to fit. The truncated (§6a) counterparts are computed here an
 recorded in FINDINGS.md as the pipeline's operating baseline; only the sanity
 relation truncated <= full is asserted for them.
 """
+import pytest
+
+pytestmark = pytest.mark.corpus   # needs the private goal datasets
 
 
 def _indicator(prof, goal_id, name):

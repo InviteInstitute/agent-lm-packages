@@ -25,19 +25,14 @@ Conventions:
 from __future__ import annotations
 
 import math
-import os
 from dataclasses import dataclass, field
-from typing import Optional
 
-from goal_strategy.detector.parsing.parse_blocks import parse_workspace
 from goal_strategy.detector.simulation.simulate_path import (
     SimulationResult,
-    simulate_path,
     slice_sim_result,
 )
 
-from .codefacts import extract_code_facts
-from .config import IndicatorSpec, LoadedConfig, RungSpec, load_configs
+from .config import RungSpec
 from .indicators import (
     _STATE_ACTIVE_FROM_STEP,
     _attachment_structures,
@@ -45,10 +40,8 @@ from .indicators import (
     _magnet_pair_margin,
     _magnet_pose_margin,
     _zone_step_flag,
-    EvalContext,
     REGISTRY,
 )
-from .profile import _find_boundary_exit
 
 ORIGIN_STEP = -1
 
@@ -87,13 +80,12 @@ def timeline_result(workspace_xml: str, program_id: str,
                     configs_dir: str | None = None,
                     conditional_hats: str | None = None,
                     scheduler: str | None = None,
-                    stack_precedence: str | None = None,
                     _execution=None) -> TimelineResult:
     from .execution import prepare_execution
     execution = _execution or prepare_execution(
         workspace_xml, program_id, playground_params, playground,
         configs_dir=configs_dir, conditional_hats=conditional_hats,
-        scheduler=scheduler, stack_precedence=stack_precedence)
+        scheduler=scheduler)
     cfg, ectx = execution.config, execution.context
     full = ectx.full_sim
     if full is None:

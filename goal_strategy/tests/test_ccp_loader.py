@@ -40,11 +40,10 @@ def runs():
 @pytest.fixture(scope="module")
 def dev_corpus():
     from goal_strategy.tests.helpers import load_final_code_states
-    from pathlib import Path
-    root = Path(__file__).resolve().parent.parent
     return load_final_code_states(str(data_path() / "final_code_states.parquet"))
 
 
+@pytest.mark.corpus
 def test_full_dataset_shape(runs):
     assert len(runs) == 7984
     assert len({r.student_study_id for r in runs}) == 205
@@ -53,6 +52,7 @@ def test_full_dataset_shape(runs):
     assert all(r.workspace_xml for r in runs)   # 100% populated at build time
 
 
+@pytest.mark.corpus
 def test_run_seq_contiguous_per_session(runs):
     from collections import defaultdict
     by_sess = defaultdict(list)
@@ -62,6 +62,7 @@ def test_run_seq_contiguous_per_session(runs):
         assert seqs == list(range(1, len(seqs) + 1)), sess
 
 
+@pytest.mark.corpus
 def test_params_unwrapped_flat_and_self_identified(runs):
     with_params = [r for r in runs if r.playground_params]
     # flat dev-corpus shape: the fields every consumer reads
@@ -83,6 +84,7 @@ def test_unwrap_params_contract():
     assert unwrap_params("") == (None, None)
 
 
+@pytest.mark.corpus
 def test_cohort_tags(runs):
     from collections import Counter
     c = Counter(r.cohort for r in runs)
@@ -90,6 +92,7 @@ def test_cohort_tags(runs):
                  "WREN/2026-02": 4161, "LARK/2026-04": 1}
 
 
+@pytest.mark.corpus
 def test_dev_overlap_tags(runs, dev_corpus):
     tagged = [r for r in runs if r.dev_corpus_overlap]
     assert len(tagged) == 168
@@ -115,12 +118,14 @@ def _same_run_matches(runs, dev_corpus):
     return matched, unmatched
 
 
+@pytest.mark.corpus
 def test_sanity_gate_same_run_pairing(runs, dev_corpus):
     matched, unmatched = _same_run_matches(runs, dev_corpus)
     assert len(matched) == 107
     assert set(unmatched) == CROSS_RUN_PAIRINGS
 
 
+@pytest.mark.corpus
 def test_sanity_gate_profiles_bit_for_bit(runs, dev_corpus):
     """For matched pairs, the profile through the new loader is IDENTICAL to
     the dev-corpus profile — same xml, same params, same pure function; a

@@ -2,6 +2,8 @@
 from goal_strategy.paths import data_path
 import pytest
 
+from goal_strategy.tests.test_timeline import toy  # noqa: F401 (shared fixture)
+
 
 @pytest.fixture(scope="session")
 def corpus():
@@ -24,23 +26,7 @@ def profiles_full(corpus):
             for p in corpus]
 
 
-# These cases read private files directly instead of using the shared fixtures.
-_DIRECT_CORPUS = {
-    "test_real_registry_covers_every_observed_type", "test_dev_corpus_carries_no_unmodeled_flag",
-    "test_procedures_call_run_is_no_longer_flagged", "test_cli_writes_flat_csv",
-    "test_outline_rows_render_a_real_ccp_run", "test_brightness_is_foreign_not_unmodeled",
-    "test_cohort_table_shape",
-}
-
-
 def pytest_collection_modifyitems(config, items):
-    for item in items:
-        if "goal_strategy/tests/" not in item.nodeid:
-            continue
-        if (_DIRECT_CORPUS & {item.originalname} or
-            {"corpus", "corpus_map", "runs", "dev_corpus", "frozen", "replayed"} & set(item.fixturenames)
-            or (item.path.name == "test_rung_sweep.py" and "rows" in item.fixturenames)):
-            item.add_marker(pytest.mark.corpus)
     if config.getoption("--require-goal-data"):
         paths = ["final_code_states.parquet", "frozen_paths.parquet",
                  "ccp_run_dataset/ccp_runs.parquet", "ccp_run_dataset/stage2_rungs.csv",

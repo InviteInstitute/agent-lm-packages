@@ -16,7 +16,7 @@ evidence record — no extracts (the ruled U semantics).
 from __future__ import annotations
 
 import math
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from goal_strategy.detector.simulation.simulate_path import _point_segment_dist
 
@@ -336,8 +336,6 @@ def scenario_evidence(program, result, artifact, card) -> ScenarioEvidence:
     for pid, s in sorted((sim.object_contacts or {}).items(), key=lambda kv: kv[1]):
         if s >= onset and _in_window(s):
             seams.append((int(s), "engage"))
-    last_contact = max((sim.object_contacts or {}).items(),
-                       key=lambda kv: kv[1], default=(None, None))
     for pid, s in sorted((sim.pieces_cleared or {}).items(), key=lambda kv: kv[1]):
         if not _in_window(s):
             continue
@@ -469,118 +467,4 @@ def battery_evidence(workspace_xml: str, program_id: str,
             continue
         out.append(scenario_evidence(program, res, art,
                                      cards.get(res.scenario_id, {})))
-    return out
-
-
-@dataclass(frozen=True)
-class FamilyEvidence:
-    """Cross-variant aggregation (B-2 layer 4): the two family-level
-    indicators. `outcome_profile` keeps RAW per-variant check outcomes
-    (status, or the measured value) — level reading belongs to the
-    combination mechanism, never here."""
-    family: str
-    variants: tuple
-    abstained_variants: tuple
-    # check name -> {scenario_id: status-or-value}
-    outcome_profile: dict = field(default_factory=dict)
-    # structure exercised in EVERY non-abstained variant (loop/branch ids)
-    shared_structure: tuple = ()
-    # structure exercised in at least one variant
-    structure_union: tuple = ()
-
-
-def family_evidence(report, evidences) -> list:
-    """Aggregate a battery report's scenarios by family. `evidences` is
-    the scenario_evidence list (for abstention status); artifacts supply
-    the exercised-structure sets."""
-    by_fam: dict[str, list] = {}
-    for res in report.scenarios:
-        by_fam.setdefault(res.family, []).append(res)
-    ev_by_id = {e.scenario_id: e for e in evidences}
-    arts = {(a.scenario_id, a.construct): a for a in report.artifacts}
-    out = []
-    for fam, results in sorted(by_fam.items()):
-        if len(results) < 2:
-            continue          # a family is cross-variant by definition
-        abstained = tuple(r.scenario_id for r in results
-                          if ev_by_id.get(r.scenario_id) is not None
-                          and ev_by_id[r.scenario_id].abstained)
-        live = [r for r in results if r.scenario_id not in abstained]
-        profile: dict = {}
-        for r in results:
-            for c in r.checks:
-                cell = ("abstained:" + (c.abstain_reason or "")) if c.abstained \
-                    else (c.value if c.value is not None else c.status)
-                profile.setdefault(c.name, {})[r.scenario_id] = cell
-        struct_sets = []
-        for r in live:
-            art = arts.get((r.scenario_id, r.construct))
-            if art is None:
-                continue
-            sim = art.sim
-            struct_sets.append(set((sim.loops_exercised or {}).keys())
-                               | set((sim.branches_exercised or {}).keys()))
-        shared = set.intersection(*struct_sets) if struct_sets else set()
-        union = set.union(*struct_sets) if struct_sets else set()
-        out.append(FamilyEvidence(
-            family=fam,
-            variants=tuple(r.scenario_id for r in results),
-            abstained_variants=abstained,
-            outcome_profile=profile,
-            shared_structure=tuple(sorted(shared)),
-            structure_union=tuple(sorted(union))))
-    return out
-
-
-def load_evidence_registry(playground: str = "castle_crashers",
-                           configs_dir: str | None = None) -> dict:
-    from .config import load_testcase_card
-    return load_testcase_card(playground, "_evidence", configs_dir)
-
-
-def dimension_u_map(evidences, registry: dict) -> dict:
-    """Per-dimension U surfacing (reviewer-ruled 2026-08-31): a scenario
-    that abstained is U for every dimension its variables feed. Returns
-    {dimension: {"abstained": [(scenario, reason)...],
-                 "informative": [scenario...]}} — the joint model reads
-    `informative` as the scenarios contributing variables and
-    `abstained` as the map's U cells that actually occurred."""
-    fam_dims: dict[str, dict] = {}
-    for var in (registry.get("variables") or {}).values():
-        # registry v2 (2026-09-05): primary/supporting/role replace the
-        # flat `informs`; v1 registries still read (informs -> supporting)
-        prim = set(var.get("primary") or [])
-        supp = set(var.get("supporting") or var.get("informs") or [])
-        role = var.get("role") or "indicator"
-        for fam in var.get("families") or []:
-            slot = fam_dims.setdefault(fam, {"primary": set(),
-                                             "supporting": set(),
-                                             "validation": set()})
-            if role == "validation":
-                slot["validation"] |= prim | supp
-            else:
-                slot["primary"] |= prim
-                slot["supporting"] |= supp
-    out: dict = {d: {"abstained": [], "informative": [],
-                     "informative_primary": [], "informative_supporting": [],
-                     "informative_validation": []}
-                 for d in registry.get("dimensions") or []}
-    for e in evidences:
-        slot = fam_dims.get(e.family)
-        if not slot:
-            continue
-        touched = slot["primary"] | slot["supporting"] | slot["validation"]
-        for dim in touched:
-            if dim not in out:
-                continue
-            if e.abstained:
-                out[dim]["abstained"].append((e.scenario_id, e.abstain_reason))
-            else:
-                out[dim]["informative"].append(e.scenario_id)
-                if dim in slot["primary"]:
-                    out[dim]["informative_primary"].append(e.scenario_id)
-                elif dim in slot["supporting"]:
-                    out[dim]["informative_supporting"].append(e.scenario_id)
-                else:
-                    out[dim]["informative_validation"].append(e.scenario_id)
     return out

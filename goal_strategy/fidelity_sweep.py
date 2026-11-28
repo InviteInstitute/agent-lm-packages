@@ -56,23 +56,13 @@ def _trajectory_distance(sim, gx, gy):
 
 
 def sweep(out_csv: str, scheduler: str | None = None, playground="castle_crashers", configs_dir=None) -> dict:
-    from goal_strategy.detector.parsing.parse_blocks import parse_workspace
-    from goal_strategy.detector.simulation.simulate_path import simulate_path
     from .config import load_configs
     from .profile import _profile
 
-    cfg = load_configs(playground, configs_dir)
+    load_configs(playground, configs_dir)   # fail fast on a broken card
     from .execution import prepare_execution
     from .serialize import PIPELINE_VERSION
     all_runs = load_ccp_runs()
-    # OI-7 lockout (2026-08-25): precedence recovered over WHOLE sessions
-    # (non-telemetry snapshots included — they carry creation evidence)
-    from .ccp_runs import stack_precedence_map
-    # OI-7 PAUSED (2026-08-25, reviewer parallel-execution investigation +
-    # arbitration adjudication: sequential-sum beats every exclusive-owner
-    # policy against GPS — see docs/archive/PARALLEL_EXECUTION.md). Machinery stays;
-    # flip to stack_precedence_map(...) only after the scheduling probes.
-    prec = {}
     runs = [r for r in all_runs if r.playground_params]
     last_tel = {}
     for r in runs:                       # runs are session-ordered by run_seq

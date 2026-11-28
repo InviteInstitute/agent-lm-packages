@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
 import yaml
 
 from goal_strategy.detector.parsing.parse_blocks import parse_workspace

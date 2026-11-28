@@ -5,7 +5,7 @@ import copy
 import pytest
 
 from goal_strategy import GoalProfileStream, goal_profiles_from_events
-from goal_strategy.tests.test_event_adapter import XML, event
+from goal_strategy.tests.test_event_adapter import event
 
 SESSION = 'student/session'
 

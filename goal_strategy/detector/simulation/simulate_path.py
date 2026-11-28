@@ -30,13 +30,12 @@ a playground YAML card by PlaygroundContext.from_playground_card().
 The simulator produces raw geometric observations:
   - path: full list of PathStep positions
   - min_distance_to_objects: per-object minimum approach distance
-  - first_object_tolerance_steps: per-object first step within tolerance
   - region_coverage_fractions: per-region coverage estimate
   - magnet_fires_at_step: step when magnet boost first fired (VEX-specific observable)
 
 Goal-specific derived metrics (axis progress toward a target, monotonicity,
 magnet-before-plow ordering) are computed by the goal scorer using the raw path
-and the PlaygroundContext — not here.  Use compute_axis_progress_metrics() for that.
+and the PlaygroundContext, not here.
 
 Heading convention (internal, math convention):
   0°   = positive X (East)
@@ -228,7 +227,6 @@ class ObjectRef:
     x: float
     y: float
     tolerance: float          # proximity radius that counts as "reached" (used in scoring)
-    segmentation_radius: float = 0.0  # wider radius for phase-boundary detection only; 0 = use tolerance
     # Taxonomy fields (loaded from YAML objects.{id}.object_type / .movable)
     object_type: str = "unspecified"   # tool | target | obstacle | unspecified
     movable: bool | None = None        # True = dynamic rigid body; False = fixed; None = unspecified
@@ -367,7 +365,6 @@ class PlaygroundContext:
                 x=float(x),
                 y=float(y),
                 tolerance=float(obj_data.get("tolerance", 100)),
-                segmentation_radius=float(obj_data.get("segmentation_radius", 0)),
                 object_type=str(obj_data.get("object_type", "unspecified")),
                 movable=obj_data.get("movable"),  # None if absent
                 navigation_target=bool(obj_data.get("navigation_target", False)),
@@ -609,13 +606,6 @@ class SimulationResult:
     min_distance_to_objects: dict = field(default_factory=dict)
     # {object_id: float}  — minimum distance reached during the run
 
-    first_object_tolerance_steps: dict = field(default_factory=dict)
-    # {object_id: Optional[int]}  — first step index within tolerance, or None
-
-    first_object_segmentation_steps: dict = field(default_factory=dict)
-    # {object_id: Optional[int]}  — first step within segmentation_radius (or tolerance if not set), or None
-    # Used by segment_code.py for phase-boundary detection only; scoring uses first_object_tolerance_steps.
-
     # Named region coverage
     region_coverage_fractions: dict = field(default_factory=dict)
     # {region_id: float}  — fraction of region grid cells visited
@@ -640,11 +630,6 @@ class SimulationResult:
     # Path-level summary
     net_displacement_from_spawn: float = 0.0
     exits_field_boundary: bool = False
-    min_distance_from_center: float = float("inf")
-
-    # Pen drawing — recorded when robot moves with pen down.
-    # Each entry is (x0, y0, x1, y1, color, width_name).
-    pen_segments: list = field(default_factory=list)
 
     # Set True if any loop was capped during simulation (forever, repeat-until,
     # or repeat(N) with N > _MAX_UNROLL_ITERATIONS).  When True, coverage
@@ -737,17 +722,13 @@ class SimulationResult:
     # reviewer ruling 2026-08-24) — the instrument behind the
     # detection_physics fidelity lane.
     sensor_hats_fired: dict = field(default_factory=dict)
-    # OI-7 lockout (2026-08-25): the when_started stack that owned the
-    # drivetrain when a creation-order precedence was supplied and applied;
-    # None when no precedence was supplied (legacy concurrent approximation).
-    stack_lockout_winner: Optional[str] = None
     # VR-Seq (2026-08-26): which execution model produced this result —
     # "sequential" (legacy) or "cooperative" (scratch-vm-transliterated
     # scheduler). A RESULT FIELD, deliberately not a flag: flags feed the
     # high-certainty masks and the fidelity taxonomy, and a provenance
     # marker must not poison either.
     scheduler: str = "sequential"
-    # VR-Seq spec delta (2026-08-26): superseded_motion is MEASURED
+    # VR-Seq spec delta (2026-08-26): superseded motion is MEASURED
     # (truncate_and_resume) — re-verified by the reviewer's two-thread
     # contention probe 2026-09-04 (drive_for 3000 preempted at 1s by a
     # turn_for from the other thread: aborts at ~490mm and the thread
@@ -839,29 +820,23 @@ class _Sequencer:
     wins); continuous motion lives in the legacy pending fields, which
     already implement the last-write-wins cell for the non-blocking case."""
 
-    def __init__(self, sim, roots, superseded_motion: str):
+    def __init__(self, sim, roots):
         self.sim = sim
-        self.policy = superseded_motion
         self.threads = [_SeqThread(r, i) for i, r in enumerate(roots)]
         self.active = None            # (thread, park) — blocking *_for motion
-        self.resume_queue = []        # resume_after policy
         self._phase_writers = set()   # thread idxs that wrote this phase
 
     # -- called from drivetrain branches (via sim._sequencer) --
 
     def notify_drivetrain_command(self) -> None:
         """Any drivetrain command supersedes an active blocking motion
-        (last write wins — spec §2.4 rule 1/2)."""
+        (last write wins — spec §2.4 rule 1/2). The superseded thread resumes
+        at once (truncate and resume, measured in VEX VR)."""
         if self.active is not None:
-            t, park = self.active
+            t, _park = self.active
             self.active = None
             self.sim.motions_superseded += 1
-            if self.policy == "truncate_and_park":
-                t.status = _T_GATED          # dead, not an error
-            elif self.policy == "resume_after":
-                self.resume_queue.append((t, park))
-            else:                            # truncate_and_resume (default)
-                t.status = _RUNNABLE
+            t.status = _RUNNABLE
         writer = self.sim._current_thread_idx
         self._phase_writers.add(writer)
         if len(self._phase_writers) > 1:
@@ -873,12 +848,10 @@ class _Sequencer:
 
     def _enter(self, t):
         self.sim._forever_completed = t.forever_completed
-        self.sim._current_root_id = t.root.block_id
         self.sim._current_thread_idx = t.idx
 
     def _exit(self, t):
         t.forever_completed = self.sim._forever_completed
-        self.sim._current_root_id = None
         self.sim._current_thread_idx = None
 
     # -- main loop --
@@ -1033,9 +1006,6 @@ class _Sequencer:
             if park.magnitude <= eps:
                 self.active = None
                 t.status = _RUNNABLE
-                if self.policy == "resume_after" and self.resume_queue:
-                    rt, rpark = self.resume_queue.pop(0)
-                    self.active = (rt, rpark)
         # timer wakes
         for t in self.threads:
             if t.status == _PARKED_TIME:
@@ -1149,50 +1119,20 @@ class _Sequencer:
             self._exit(t)
 
 
-def _iter_stack(root):
-    """Every block in a stack's subtree: next-chain, statement slots, value
-    slots (OI-7 loser pre-scan)."""
-    node = root
-    while node is not None:
-        yield node
-        for child in (node.statements or {}).values():
-            yield from _iter_stack(child)
-        slots = node.value_slots or {}
-        for val in (slots.values() if isinstance(slots, dict) else []):
-            if val is not None:
-                yield from _iter_stack(val)
-        node = node.next
-
-
 def simulate_path(
     program,   # BlockProgram
     context: PlaygroundContext,
     conditional_hats: str = "execute",   # "execute" (status quo, B1) | "suppress" (B2/B3)
-    stack_precedence: "str | None" = None,   # OI-7: winning when_started block id
     scheduler: str = "sequential",       # VR-Seq: "sequential" | "cooperative"
-    superseded_motion: str = "truncate_and_resume",   # MEASURED in VEX VR
     loop_iteration_time_s: float = 0.0,  # 60Hz loop clock (measured 60.15Hz)
-    thread_start_order: str = "document",   # "document" | "reverse_document"
     time_budget_s: "float | None" = None,   # wall-clock budget (observed run_duration)
     movable_predicates: "str | None" = None,   # bracketing: None|"floor"|"ceiling"
-    random_policy: str = "sampled",   # "sampled"|"midpoint"|"low"|"high"
 ) -> SimulationResult:
     """Simulate robot movement for a BlockProgram on a given playground.
 
     Args:
         program: Parsed BlockProgram (from parse_blocks.parse_workspace).
         context: PlaygroundContext built from the playground YAML card.
-        stack_precedence: OI-7 lockout (reviewer-probed rule 2026-08-21, built
-            2026-08-25): the block id of the most recently CREATED
-            when_started stack, recovered from longitudinal snapshots. When
-            it names one of ≥2 when_started stacks, that stack owns the
-            drivetrain OUTRIGHT: losing stacks' drivetrain commands
-            (including velocity setters) are no-ops, skipped instantly —
-            non-drivetrain effects still run. Whether a real loser's no-op
-            drive consumes its duration is an open probe
-            (`stack_lockout_timing_assumed` flags losers with post-drive
-            effects). Absent or unmatched -> byte-identical legacy behavior
-            (sequential approximation + concurrent_stacks_unverified).
 
     Returns:
         SimulationResult with full path trace and derived metrics.
@@ -1204,7 +1144,7 @@ def simulate_path(
     # program, not our sampling. zlib.crc32, never hash(): str hashing is
     # salted per process, which would make every session differ.
     _seed = _zlib.crc32((getattr(program, "program_id", "") or "").encode())
-    sim = _Simulator(context, random_seed=_seed, random_policy=random_policy)
+    sim = _Simulator(context, random_seed=_seed)
     # Part A (task 3): broadcast receivers execute inline at their broadcast
     # site, keyed on BROADCAST_OPTION — never in the top-level document-order
     # loop (that would run them twice, or at the wrong time).
@@ -1225,36 +1165,12 @@ def simulate_path(
             sim.receivers.setdefault(key, []).append(root)
         else:
             top_level.append(root)
-    # Part C / OI-7: multiple when_started stacks run concurrently on the
-    # real robot; the reviewer-probed rule is that the most recently CREATED
-    # stack owns the drivetrain outright. With a recovered precedence we
-    # apply the lockout; without one, the sequential approximation stands
-    # and the flag stays (honest fallback — never silently re-picked).
-    started_ids = [r.block_id for r in top_level
-                   if r.block_type == _HAT_STARTED]
-    if len(started_ids) > 1:
-        if stack_precedence in started_ids:
-            sim.stack_lockout_winner = stack_precedence
-            sim.lockout_losers = frozenset(
-                i for i in started_ids if i != stack_precedence)
-            # Open probe (OI-7 detail): does a loser's no-op drive consume
-            # its duration? Only matters when a losing stack pairs
-            # drivetrain commands with other effects — flag those.
-            for r in top_level:
-                if r.block_id in sim.lockout_losers:
-                    kinds = {n.block_type for n in _iter_stack(r)}
-                    if any(k.startswith("pg_drivetrain_") for k in kinds) \
-                            and any(k.startswith(("pg_magnet_",
-                                                  "pg_events_broadcast",
-                                                  "pg_control_stop_project"))
-                                    for k in kinds):
-                        sim._flag("stack_lockout_timing_assumed")
-                        break
-        elif scheduler != "cooperative":
-            # the cooperative scheduler RESOLVES multi-stack execution
-            # (spec §6): the flag is retired for those runs; the residual
-            # P-B uncertainty travels on motion_superseded instead
-            sim._flag("concurrent_stacks_unverified")
+    # Multiple when_started stacks run concurrently on the real robot. The
+    # cooperative scheduler models that, so only the sequential approximation
+    # flags it.
+    if scheduler != "cooperative" and sum(
+            r.block_type == _HAT_STARTED for r in top_level) > 1:
+        sim._flag("concurrent_stacks_unverified")
     has_front_eye_model = bool((context.sensor_specs.get("front_eye") or {})
                                .get("range_mm"))
     stopped = False
@@ -1304,8 +1220,6 @@ def simulate_path(
         executable.append(root)
     if scheduler not in ("sequential", "cooperative"):
         raise ValueError(f"unknown scheduler {scheduler!r}")
-    if thread_start_order not in ("document", "reverse_document"):
-        raise ValueError(f"unknown thread_start_order {thread_start_order!r}")
     sim.loop_iteration_time_s = loop_iteration_time_s
     sim.time_budget_s = time_budget_s
     if movable_predicates not in (None, "floor", "ceiling"):
@@ -1346,19 +1260,13 @@ def simulate_path(
     try:
         if scheduler == "cooperative":
             # VR-Seq Stage 2: one thread per executable stack, round-robin
-            # at the scratch-vm yield points. Start order SETTLED as
-            # document order (measured — SCHEDULING_MODEL §11.2);
-            # "reverse_document" is retained as a falsification alternative
-            # only (tier-2 sensitivity sweep optional, not a gate).
-            roots = (list(reversed(executable))
-                     if thread_start_order == "reverse_document"
-                     else executable)
-            sim._sequencer = _Sequencer(sim, roots, superseded_motion)
+            # at the scratch-vm yield points, started in document order
+            # (measured in VEX VR).
+            sim._sequencer = _Sequencer(sim, executable)
             sim._sequencer.run()
         else:
             for root in executable:
                 sim._forever_completed = False   # per-stack (parallel programs)
-                sim._current_root_id = root.block_id   # OI-7 lockout scope
                 try:
                     # sequential driver: drain the stack generator to
                     # completion (VR-Seq Stage 1 — yields are no-ops here)
@@ -1367,8 +1275,6 @@ def simulate_path(
                 except _GateSignal as sig:
                     _note_escaped_break(sim, sig)
                     continue   # unmet wait_until gates this stack only
-                finally:
-                    sim._current_root_id = None
         # Detection state at program end may satisfy a still-pending hat
         # (e.g. the main stack's last move brought a body into the cone).
         sim.fire_ready_sensor_hats()
@@ -1468,11 +1374,6 @@ def slice_sim_result(
 
     # Recompute per-object proximity
     min_dist: dict[str, float] = {}
-    first_tol: dict[str, int | None] = {}
-    for ps in slice_path:
-        for obj_id in ps.objects_in_tolerance:
-            if first_tol.get(obj_id) is None:
-                first_tol[obj_id] = ps.step
 
     if context is not None:
         # Compute actual euclidean min distance to each object over this slice.
@@ -1547,14 +1448,6 @@ def slice_sim_result(
     else:
         adjusted_magnet = None
 
-    # Carry over first_object_segmentation_steps from full result (clipped to slice)
-    first_seg: dict[str, int | None] = {}
-    for obj_id, seg_step in full_result.first_object_segmentation_steps.items():
-        if seg_step is not None and path_start <= seg_step < path_end:
-            first_seg[obj_id] = seg_step
-        else:
-            first_seg[obj_id] = None
-
     # Net displacement and boundary check for the slice
     # Measured from the origin, not slice_path[0], so the first movement counts.
     net_displacement = math.sqrt(
@@ -1567,8 +1460,6 @@ def slice_sim_result(
         final_y=final_y,
         final_heading=final_heading,
         min_distance_to_objects=min_dist,
-        first_object_tolerance_steps=first_tol,
-        first_object_segmentation_steps=first_seg,
         region_coverage_fractions=coverage_fractions,
         region_cells_visited={k: len(v) for k, v in region_cells.items()},
         regions_entered=regions_entered,
@@ -1601,538 +1492,6 @@ def slice_sim_result(
         sensor_first_eval={bid: v for bid, v in full_result.sensor_first_eval.items()
                            if path_start <= v[0] < path_end},
     )
-
-
-# ------------------------------------------------------------------ #
-# Path analysis utilities (operate on raw path, no playground coupling)
-# ------------------------------------------------------------------ #
-
-def compute_axis_progress_metrics(
-    path: list[PathStep],
-    target_x: float,
-    target_y: float,
-    origin: tuple[float, float] | None = None,
-) -> dict:
-    """Compute how consistently the path moves toward a target point.
-
-    Considers only steps that involve movement (non-zero displacement).
-    For each move step, records whether the robot closed the gap on either
-    axis toward the target.
-
-    Args:
-        path:     List of PathStep from SimulationResult.path.
-        target_x: X coordinate of the target point.
-        target_y: Y coordinate of the target point.
-        origin:   Position before path[0] — the spawn for a whole run, or the
-                  position at path_start - 1 for a slice.  The trace records a
-                  step only after a block has run, so path[0] is the END of the
-                  first movement.  Without an origin that movement is never
-                  measured, and a single-movement segment scores 0.0 because it
-                  has no consecutive pair to compare.
-
-    Returns:
-        {
-          'per_step': list[dict],         step-by-step progress records
-          'monotonic_fraction': float,    fraction of move steps with progress
-          'has_reversals': bool,          any step moved away from target
-          'is_monotonic': bool,           monotonic_fraction >= 0.6
-        }
-    """
-    per_step = []
-    move_steps = []
-
-    # (x, y, step_label) for each position, oldest first.
-    points: list[tuple[float, float, int]] = []
-    if origin is not None:
-        points.append((origin[0], origin[1], -1))
-    points.extend((ps.x, ps.y, ps.step) for ps in path)
-
-    for i in range(1, len(points)):
-        prev_x, prev_y, _ = points[i - 1]
-        cur_x, cur_y, cur_step = points[i]
-        if abs(cur_x - prev_x) < 0.01 and abs(cur_y - prev_y) < 0.01:
-            continue  # no movement this step
-
-        dx_toward = abs(prev_x - target_x) - abs(cur_x - target_x)
-        dy_toward = abs(prev_y - target_y) - abs(cur_y - target_y)
-        made_progress = dx_toward > 1.0 or dy_toward > 1.0
-
-        record = {
-            "step": cur_step,
-            "x": cur_x,
-            "y": cur_y,
-            "dx_toward": dx_toward,
-            "dy_toward": dy_toward,
-            "made_progress": made_progress,
-        }
-        per_step.append(record)
-        move_steps.append(made_progress)
-
-    if not move_steps:
-        return {
-            "per_step": per_step,
-            "monotonic_fraction": 0.0,
-            "has_reversals": False,
-            "is_monotonic": False,
-        }
-
-    monotonic_frac = sum(move_steps) / len(move_steps)
-    return {
-        "per_step": per_step,
-        "monotonic_fraction": monotonic_frac,
-        "has_reversals": any(not m for m in move_steps),
-        "is_monotonic": monotonic_frac >= 0.6,
-    }
-
-
-def _movement_segments(
-    path: list[PathStep],
-    origin: tuple[float, float] | None = None,
-) -> list[tuple[float, float, float, float]]:
-    """Return (x0, y0, x1, y1) for each step that actually moved the robot.
-
-    When `origin` is given it is treated as the position before path[0], so the
-    robot's FIRST movement is measured.  Without it that move is invisible —
-    the trace only records a position after a block has run, so path[0] is an
-    endpoint, not a starting point.
-    """
-    points: list[tuple[float, float]] = []
-    if origin is not None:
-        points.append(origin)
-    points.extend((p.x, p.y) for p in path)
-
-    segments: list[tuple[float, float, float, float]] = []
-    for i in range(1, len(points)):
-        (x0, y0), (x1, y1) = points[i - 1], points[i]
-        if _dist(x0, y0, x1, y1) > 0.01:
-            segments.append((x0, y0, x1, y1))
-    return segments
-
-
-def compute_path_straightness(
-    path: list[PathStep],
-    target_x: float,
-    target_y: float,
-    origin: tuple[float, float] | None = None,
-) -> dict:
-    """Measure how geometrically efficient the executed path is.
-
-    The straightness ratio is total traveled distance divided by net
-    displacement.  A perfectly straight run is 1.0; an L-shaped path with
-    equal legs is sqrt(2) ~ 1.41; detours and repeated correction push it
-    higher.  Monotonicity alone cannot separate a straight path from an
-    L-path (each leg of an L closes one axis, so both score 1.0 on
-    compute_axis_progress_metrics) — this ratio is what distinguishes them.
-
-    The ratio says nothing about *direction*, so callers should also require
-    net_progress_to_target_mm > 0: a perfectly straight path away from the
-    target is not direct navigation.
-
-    Args:
-        path:     List of PathStep from SimulationResult.path.
-        target_x: X coordinate of the navigation target.
-        target_y: Y coordinate of the navigation target.
-
-    Returns:
-        {
-          'traveled_mm': float,                total distance moved
-          'net_displacement_mm': float,        start to end, straight line
-          'straightness_ratio': float,         traveled / net (inf if net ~ 0)
-          'net_progress_to_target_mm': float,  positive = ended closer
-        }
-    """
-    segments = _movement_segments(path, origin)
-    if not segments:
-        return {
-            "traveled_mm": 0.0,
-            "net_displacement_mm": 0.0,
-            "straightness_ratio": float("inf"),
-            "net_progress_to_target_mm": 0.0,
-        }
-
-    traveled = sum(_dist(x0, y0, x1, y1) for x0, y0, x1, y1 in segments)
-    start_x, start_y = segments[0][0], segments[0][1]
-    end_x, end_y = segments[-1][2], segments[-1][3]
-    net = _dist(start_x, start_y, end_x, end_y)
-
-    return {
-        "traveled_mm": traveled,
-        "net_displacement_mm": net,
-        "straightness_ratio": (traveled / net) if net > 1e-6 else float("inf"),
-        "net_progress_to_target_mm": (
-            _dist(start_x, start_y, target_x, target_y)
-            - _dist(end_x, end_y, target_x, target_y)
-        ),
-    }
-
-
-def compute_path_leg_structure(
-    path: list[PathStep],
-    target_x: float,
-    target_y: float,
-    bearing_tolerance_deg: float = 15.0,
-    min_leg_fraction: float = 0.15,
-    origin: tuple[float, float] | None = None,
-) -> dict:
-    """Decompose the executed path into straight legs and the turns between them.
-
-    Consecutive movement steps travelling in approximately the same direction
-    are merged into one *leg*.  Legs shorter than min_leg_fraction of the total
-    distance travelled are discarded as noise, and the transitions between the
-    surviving legs describe the shape of the path:
-
-        1 leg,  0 transitions              -> a direct run
-        2 legs, 1 transition near 90 deg   -> an L-shaped / axis-aligned run
-        3+ legs, 2+ transitions            -> repeated course correction
-
-    Legs are grouped by *travel bearing* — the direction the robot actually
-    moved — rather than by its heading field.  A student who steers with
-    turn_to_heading blocks produces no relative turn angles at all, so
-    code-derived turn features miss them entirely; travel bearing sees both
-    styles identically.
-
-    Callers should also require net_progress_to_target_mm > 0.  A serpentine
-    sweep produces many legs and many transitions but never converges on the
-    target, and that is what separates it from corrective navigation.
-
-    Args:
-        path:                   List of PathStep from SimulationResult.path.
-        target_x:               X coordinate of the navigation target.
-        target_y:               Y coordinate of the navigation target.
-        bearing_tolerance_deg:  Direction change below this continues the
-                                current leg instead of starting a new one.
-        min_leg_fraction:       Legs shorter than this fraction of total travel
-                                are dropped before transitions are computed.
-
-    Returns:
-        {
-          'leg_count': int,                    substantial legs
-          'leg_lengths_mm': list[float],
-          'leg_bearings_deg': list[float],     0-360, math convention
-          'transitions_deg': list[float],      0-180 between adjacent legs
-          'primary_transition_deg': float|None,  between the two longest legs
-          'major_transition_count': int,       transitions > bearing_tolerance
-          'net_progress_to_target_mm': float,
-        }
-    """
-    empty = {
-        "leg_count": 0,
-        "leg_lengths_mm": [],
-        "leg_bearings_deg": [],
-        "transitions_deg": [],
-        "primary_transition_deg": None,
-        "major_transition_count": 0,
-        "net_progress_to_target_mm": 0.0,
-    }
-
-    segments = _movement_segments(path, origin)
-    if not segments:
-        return empty
-
-    # --- merge consecutive steps sharing a travel bearing into legs --- #
-    legs: list[list[float]] = []  # [bearing_deg, length_mm]
-    for x0, y0, x1, y1 in segments:
-        bearing = math.degrees(math.atan2(y1 - y0, x1 - x0)) % 360.0
-        length = _dist(x0, y0, x1, y1)
-        if legs and _angle_between(bearing, legs[-1][0]) <= bearing_tolerance_deg:
-            # Length-weighted mean keeps a long leg from drifting on short steps.
-            prev_bearing, prev_length = legs[-1]
-            total = prev_length + length
-            legs[-1][0] = _mean_bearing(prev_bearing, prev_length, bearing, length)
-            legs[-1][1] = total
-        else:
-            legs.append([bearing, length])
-
-    traveled = sum(length for _, length in legs)
-    if traveled <= 0:
-        return empty
-
-    substantial = [(b, l) for b, l in legs if l >= min_leg_fraction * traveled]
-    if not substantial:
-        substantial = [max(legs, key=lambda leg: leg[1])]
-
-    transitions = [
-        _angle_between(substantial[i + 1][0], substantial[i][0])
-        for i in range(len(substantial) - 1)
-    ]
-
-    primary = None
-    if len(substantial) >= 2:
-        longest = sorted(range(len(substantial)), key=lambda i: substantial[i][1])[-2:]
-        i, j = min(longest), max(longest)
-        primary = _angle_between(substantial[j][0], substantial[i][0])
-
-    start_x, start_y = segments[0][0], segments[0][1]
-    end_x, end_y = segments[-1][2], segments[-1][3]
-
-    return {
-        "leg_count": len(substantial),
-        "leg_lengths_mm": [l for _, l in substantial],
-        "leg_bearings_deg": [b for b, _ in substantial],
-        "transitions_deg": transitions,
-        "primary_transition_deg": primary,
-        "major_transition_count": sum(
-            1 for t in transitions if t > bearing_tolerance_deg
-        ),
-        "net_progress_to_target_mm": (
-            _dist(start_x, start_y, target_x, target_y)
-            - _dist(end_x, end_y, target_x, target_y)
-        ),
-    }
-
-
-def compute_region_traversal_metrics(
-    path: list[PathStep],
-    region: "RegionBounds",
-    robot_width_mm: float = 50.8,
-    sample_interval_mm: float = _COVERAGE_GRID_CELL_MM / 2.0,
-    bearing_tolerance_deg: float = 15.0,
-    min_turn_deg: float = 30.0,
-    min_leg_fraction_of_longest: float = 0.25,
-    reversal_deg: float = 135.0,
-    origin: tuple[float, float] | None = None,
-) -> dict:
-    """Describe how a path traverses a region: presence, recurrence, organization.
-
-    One traversal of the movement segments produces every metric the area-traversal
-    strategies need (`serpentine_sweep`, `cyclic_area_traversal`, `patchy_coverage`,
-    `single_pass_traversal`), so the four detectors cannot disagree about what the
-    robot did.
-
-    This function deliberately does NOT compute a coverage fraction.  How much of
-    the region was covered already has one owner — `region_coverage_fractions` on
-    SimulationResult, footprint-aware via _coverage_cells_for_move — and callers
-    must read it from there.  A second implementation here would drift: the
-    simulator credits cells the robot occupies even while stationary (turning in
-    place), whereas these metrics walk movement only, which is a real difference of
-    about one cell on a small number of paths.
-
-    `revisit_fraction` walks the CENTRE LINE, in order.  Footprint cells come back
-    as an unordered set, which cannot express sequence, and revisitation is a claim
-    about sequence.
-
-    Revisitation counts CELL TRANSITIONS, not samples.  The centre line is sampled
-    every half-cell, so consecutive samples land in the same cell by construction;
-    counting samples would score roughly nine paths in ten as "revisiting" and
-    measure the sampling rate rather than the robot's behaviour.
-
-    Heading organization is measured over the WHOLE path, not the in-region clip.
-    Clipping at the region boundary splits legs and manufactures turns the student
-    never wrote.
-
-    `alternating_turn_fraction` and `same_direction_turn_fraction` sum to exactly
-    1.0 — they are one measurement seen from two sides, not two observations, and
-    callers must treat them as mutually exclusive bands rather than independent
-    evidence.  Both are 0.0 when fewer than two major turns occur, which is why
-    `heading_organization_defined` exists: without checking it, "both fractions are
-    low" is silently true of a straight line.
-
-    Args:
-        path:                   PathStep list from SimulationResult.path.
-        region:                 RegionBounds for the traversal region.
-        sample_interval_mm:     Centre-line sampling pitch (default half a cell).
-        bearing_tolerance_deg:  Direction change below this continues the current
-                                leg instead of starting a new one.
-        min_turn_deg:           Leg-to-leg change at or above this is a major turn.
-        min_leg_fraction_of_longest:
-                                Legs shorter than this share of the longest leg are
-                                dropped before turn structure is read, so a sweep's
-                                short between-row connectors do not mask the rows.
-        origin:                 Position before path[0].  REQUIRED for correctness —
-                                without it the first movement is invisible, because
-                                the trace only records a position after a block runs.
-
-    Returns:
-        {
-          'traveled_mm', 'net_displacement_mm', 'path_closure_ratio',
-          'in_region_distance_mm', 'path_fraction_in_region',
-          'unique_cells_entered', 'cell_sequence_length', 'revisit_fraction',
-          'leg_count', 'substantial_leg_count', 'opposed_heading_fraction',
-          'major_turn_count', 'reversal_turn_count', 'turn_pair_count',
-          'heading_organization_defined',
-          'alternating_turn_fraction', 'same_direction_turn_fraction',
-        }
-    """
-    empty = {
-        "traveled_mm": 0.0,
-        "net_displacement_mm": 0.0,
-        "path_closure_ratio": 1.0,
-        "in_region_distance_mm": 0.0,
-        "path_fraction_in_region": 0.0,
-        "unique_cells_entered": 0,
-        "cell_sequence_length": 0,
-        "revisit_fraction": 0.0,
-        "leg_count": 0,
-        "substantial_leg_count": 0,
-        "opposed_heading_fraction": 0.0,
-        "major_turn_count": 0,
-        "reversal_turn_count": 0,
-        "turn_pair_count": 0,
-        "heading_organization_defined": False,
-        "alternating_turn_fraction": 0.0,
-        "same_direction_turn_fraction": 0.0,
-    }
-
-    segments = _movement_segments(path, origin)
-    if not segments or region is None:
-        return empty
-
-    pitch = max(1.0, sample_interval_mm)
-
-    traveled = 0.0
-    in_region = 0.0
-    cell_walk: list[tuple[int, int]] = []
-
-    for x0, y0, x1, y1 in segments:
-        length = _dist(x0, y0, x1, y1)
-        traveled += length
-
-        n = max(2, int(length / pitch) + 1)
-        inside = 0
-        for i in range(n + 1):
-            t = i / n
-            x = x0 + t * (x1 - x0)
-            y = y0 + t * (y1 - y0)
-            if region.contains(x, y):
-                inside += 1
-                cell = (
-                    int(math.floor(x / _COVERAGE_GRID_CELL_MM)),
-                    int(math.floor(y / _COVERAGE_GRID_CELL_MM)),
-                )
-                # Append only on a genuine cell change — see docstring.
-                if not cell_walk or cell_walk[-1] != cell:
-                    cell_walk.append(cell)
-        in_region += length * (inside / (n + 1))
-
-    if traveled <= 0:
-        return empty
-
-    seen: set = set()
-    revisits = 0
-    for cell in cell_walk:
-        if cell in seen:
-            revisits += 1
-        else:
-            seen.add(cell)
-
-    start_x, start_y = segments[0][0], segments[0][1]
-    end_x, end_y = segments[-1][2], segments[-1][3]
-    net = _dist(start_x, start_y, end_x, end_y)
-
-    # --- heading organization over the whole path --- #
-    legs: list[list[float]] = []
-    for x0, y0, x1, y1 in segments:
-        bearing = math.degrees(math.atan2(y1 - y0, x1 - x0)) % 360.0
-        length = _dist(x0, y0, x1, y1)
-        if legs and _angle_between(bearing, legs[-1][0]) <= bearing_tolerance_deg:
-            prev_bearing, prev_length = legs[-1]
-            legs[-1][0] = _mean_bearing(prev_bearing, prev_length, bearing, length)
-            legs[-1][1] = prev_length + length
-        else:
-            legs.append([bearing, length])
-
-    # Keep only substantial legs before reading turn structure.  A lawnmower
-    # sweep joins its rows with a short connector, and the two 90-degree turns
-    # around that connector go the SAME way — so counting every leg scores a
-    # textbook sweep at roughly 0.4 alternating and files it under irregular
-    # movement.  Dropping the connectors leaves the rows, which alternate
-    # perfectly.  The threshold is relative to the LONGEST leg, not to total
-    # travel, because a fraction-of-total rule tightens as rows are added and
-    # would start discarding the rows themselves on a long sweep.
-    longest = max((length for _, length in legs), default=0.0)
-    cutoff = min_leg_fraction_of_longest * longest
-    substantial = [leg for leg in legs if leg[1] >= cutoff] or legs
-
-    turns: list[float] = []
-    for i in range(1, len(substantial)):
-        delta = (substantial[i][0] - substantial[i - 1][0] + 180.0) % 360.0 - 180.0
-        if abs(delta) >= min_turn_deg:
-            turns.append(delta)
-
-    # A turn of almost exactly 180 degrees has no meaningful sign: left-180 and
-    # right-180 end in the same place, and the signed delta collapses to -180
-    # either way.  Row reversals in a sweep are exactly that turn, so scoring
-    # them by sign would read every lawnmower as perfectly same-direction —
-    # i.e. as circling.  A reversal is therefore counted as a change of
-    # direction on its own terms, which is what it is.
-    # A reversal always changes the sense of travel relative to whatever came
-    # before it, so it takes the opposite sign to the previous turn rather than
-    # a sign of its own.  Comparing signs then works uniformly: a sweep's row
-    # reversals alternate, a lap's quarter-turns do not.
-    reversals = [abs(t) >= reversal_deg for t in turns]
-    signs: list[int] = []
-    for i, t in enumerate(turns):
-        if reversals[i]:
-            signs.append(-signs[i - 1] if i > 0 else 1)
-        else:
-            signs.append(1 if t > 0 else -1)
-
-    # Share of substantial travel lying along a single AXIS (bearings taken
-    # modulo 180, so a row and the row back count as the same axis).  Reversing
-    # direction is not by itself a sweep — a random wander reverses constantly.
-    # What makes a sweep is that its passes are PARALLEL, and that is what this
-    # measures.
-    axis_total = sum(length for _, length in substantial)
-    opposed_fraction = 0.0
-    if axis_total > 0:
-        for candidate_bearing, _ in substantial:
-            candidate_axis = candidate_bearing % 180.0
-            aligned = sum(
-                length for bearing, length in substantial
-                if min(
-                    abs(bearing % 180.0 - candidate_axis),
-                    180.0 - abs(bearing % 180.0 - candidate_axis),
-                ) <= bearing_tolerance_deg
-            )
-            opposed_fraction = max(opposed_fraction, aligned / axis_total)
-
-    turn_pairs = max(0, len(turns) - 1)
-    defined = turn_pairs >= 1
-    if defined:
-        alternating = sum(
-            1 for i in range(turn_pairs) if signs[i] != signs[i + 1]
-        ) / turn_pairs
-        same_direction = 1.0 - alternating
-    else:
-        alternating = 0.0
-        same_direction = 0.0
-
-    return {
-        "traveled_mm": traveled,
-        "net_displacement_mm": net,
-        "path_closure_ratio": net / traveled,
-        "in_region_distance_mm": in_region,
-        "path_fraction_in_region": in_region / traveled,
-        "unique_cells_entered": len(seen),
-        "cell_sequence_length": len(cell_walk),
-        "revisit_fraction": revisits / len(cell_walk) if cell_walk else 0.0,
-        "leg_count": len(legs),
-        "substantial_leg_count": len(substantial),
-        "opposed_heading_fraction": opposed_fraction,
-        "major_turn_count": len(turns),
-        "reversal_turn_count": sum(reversals),
-        "turn_pair_count": turn_pairs,
-        "heading_organization_defined": defined,
-        "alternating_turn_fraction": alternating,
-        "same_direction_turn_fraction": same_direction,
-    }
-
-
-def _angle_between(a_deg: float, b_deg: float) -> float:
-    """Smallest absolute angle between two bearings, in [0, 180]."""
-    diff = abs(a_deg - b_deg) % 360.0
-    return min(diff, 360.0 - diff)
-
-
-def _mean_bearing(a_deg: float, a_w: float, b_deg: float, b_w: float) -> float:
-    """Weighted circular mean of two bearings, in [0, 360)."""
-    total = a_w + b_w
-    if total <= 0:
-        return a_deg
-    ar, br = math.radians(a_deg), math.radians(b_deg)
-    x = (math.cos(ar) * a_w + math.cos(br) * b_w) / total
-    y = (math.sin(ar) * a_w + math.sin(br) * b_w) / total
-    return math.degrees(math.atan2(y, x)) % 360.0
 
 
 # ------------------------------------------------------------------ #
@@ -2178,12 +1537,12 @@ def _coverage_cells_for_move(
 # Internal simulator
 # ------------------------------------------------------------------ #
 
-from ..parsing.block_program import BlockNode, BlockProgram, MAGNET_BLOCK_TYPES, SENSOR_BLOCK_TYPES
+from ..parsing.block_program import BlockNode, MAGNET_BLOCK_TYPES
 
 
 class _Simulator:
     def __init__(self, context: PlaygroundContext,
-                 random_seed: int = 0, random_policy: str = "sampled"):
+                 random_seed: int = 0):
         # Nondeterministic-value policy (2026-08-28). "sampled" draws a NEW
         # value per evaluation from a SEEDED generator: the student's block
         # re-draws on every loop iteration, so a single substituted constant
@@ -2192,10 +1551,7 @@ class _Simulator:
         # critically, a battery scenario's baseline and with-pieces runs draw
         # the SAME values (otherwise behavioral_divergence would measure our
         # own noise instead of the program's response to the pieces).
-        # "midpoint" is the pre-2026-08-28 behaviour, retained for
-        # attribution and for bracketing a run across the range.
         self._rng = _random.Random(random_seed)
-        self.random_policy = random_policy
         self.ctx = context
         self.x = context.spawn_x
         self.y = context.spawn_y
@@ -2212,12 +1568,6 @@ class _Simulator:
             obj_id: _dist(context.spawn_x, context.spawn_y, obj.x, obj.y)
             for obj_id, obj in context.objects.items()
         }
-        self.first_tol_steps: dict[str, Optional[int]] = {
-            obj_id: None for obj_id in context.objects
-        }
-        self.first_seg_steps: dict[str, Optional[int]] = {
-            obj_id: None for obj_id in context.objects
-        }
 
         # Per-region coverage
         self.region_cells: dict[str, set] = {
@@ -2227,7 +1577,6 @@ class _Simulator:
 
         # Boundary
         self.exits_boundary = False
-        self.min_dist_center = math.sqrt(context.spawn_x**2 + context.spawn_y**2)
 
         # Loop capping
         self.loop_was_capped = False
@@ -2264,12 +1613,6 @@ class _Simulator:
         self.sensor_hats_fired: dict = {}             # hat block_id -> [fire/restart steps]
         self._in_sensor_hat = False                   # reentrancy guard
         self._active_hat = None                       # hat whose stack is executing
-        # OI-7 lockout (reviewer-probed rule, built 2026-08-25): when creation
-        # order resolves, the most recently created when_started stack owns
-        # the drivetrain OUTRIGHT — losers' drivetrain commands are no-ops.
-        self.lockout_losers: frozenset = frozenset()  # losing when_started ids
-        self.stack_lockout_winner = None
-        self._current_root_id = None                  # top-level stack being run
         # VR-Seq (Stage 2): the cooperative Sequencer, when active. None in
         # sequential mode — every _coop() branch then takes the legacy path.
         self._sequencer = None
@@ -2401,10 +1744,6 @@ class _Simulator:
         self.pending_turn_block = None
 
         # Pen drawing state
-        self.pen_down: bool = False
-        self.pen_color: str = "black"
-        self.pen_width_name: str = "medium"
-        self.pen_segments: list = []  # (x0, y0, x1, y1, color, width_name)
 
         # Simulated timer (accumulates from explicit wait blocks)
         self.sim_time_s: float = 0.0   # total elapsed simulation time
@@ -2906,18 +2245,6 @@ class _Simulator:
                 self.step += 1
             return
 
-        # ---- OI-7 lockout gate (2026-08-25) ----
-        # The winning when_started stack owns the drivetrain OUTRIGHT
-        # (reviewer probe: losers' drives were completely absent, never
-        # executed even briefly). Suppress every drivetrain command executed
-        # in a losing stack's scope — velocity setters included — skipped
-        # instantly with no state change. Detection-hat stacks are outside
-        # OI-7's scope (_active_hat set): their restart semantics govern.
-        if (bt.startswith("pg_drivetrain_")
-                and self._current_root_id in self.lockout_losers
-                and self._active_hat is None):
-            return
-
         # ---- Set velocity ----
         if bt == "pg_drivetrain_set_drive_velocity":
             # Clamped to a real percentage: the sample contains VELOCITY = inf and
@@ -3141,22 +2468,9 @@ class _Simulator:
         if bt == "pg_control_stop_project":
             raise _StopSignal()
 
-        # ---- Pen drawing ----
-        if bt == "pg_looks_move_pen":
-            pos = (block.get_field("POSITION") or "down").lower()
-            self.pen_down = pos == "down"
-            return
-
-        if bt == "pg_looks_set_pen_color":
-            self.pen_color = (block.get_field("COLOR") or "black").lower()
-            return
-
-        if bt == "pg_looks_set_pen_width":
-            self.pen_width_name = (block.get_field("WIDTH") or "medium").lower()
-            return
-
-        if bt in ("pg_looks_set_pen_color_plus", "pg_looks_fill_color_plus"):
-            # Custom color — no meaningful field to extract; just acknowledge.
+        # ---- Pen drawing (no effect on the path) ----
+        if bt in ("pg_looks_move_pen", "pg_looks_set_pen_color", "pg_looks_set_pen_width",
+                  "pg_looks_set_pen_color_plus", "pg_looks_fill_color_plus"):
             return
 
         # ---- Timer ----
@@ -3744,25 +3058,17 @@ class _Simulator:
         self.y += dist_mm * math.sin(rad)
 
         # Boundary — use hex polygon check when vertices are available, else circle fallback
-        dist_center = math.sqrt(self.x**2 + self.y**2)
-        if dist_center < self.min_dist_center:
-            self.min_dist_center = dist_center
         if self.ctx.field_hex_vertices:
             if not _point_in_convex_polygon(self.x, self.y, self.ctx.field_hex_vertices):
                 self.exits_boundary = True
-        elif dist_center > self.ctx.field_radius:
+        elif math.sqrt(self.x**2 + self.y**2) > self.ctx.field_radius:
             self.exits_boundary = True
 
-        # Named objects: update min distance + tolerance detection
+        # Named objects: update min distance
         for obj_id, obj in self.ctx.objects.items():
             dp = _dist(self.x, self.y, obj.x, obj.y)
             if dp < self.min_dist_to_objects[obj_id]:
                 self.min_dist_to_objects[obj_id] = dp
-            if dp <= obj.tolerance and self.first_tol_steps[obj_id] is None:
-                self.first_tol_steps[obj_id] = self.step
-            seg_r = obj.segmentation_radius if obj.segmentation_radius > 0 else obj.tolerance
-            if dp <= seg_r and self.first_seg_steps[obj_id] is None:
-                self.first_seg_steps[obj_id] = self.step
 
         # Kinematic push model (sensing Phase 5 — TESTCASE ONLY, inert in the
         # main sim; hybrid ruling 2026-08-19 + "assume the most favorable
@@ -3893,10 +3199,6 @@ class _Simulator:
             self._sample_region_coverage(prev_x, prev_y, self.x, self.y, self.heading, region_id, region)
             if len(self.region_cells[region_id]) > cells_before:
                 traversed_regions.add(region_id)
-
-        if self.pen_down:
-            self.pen_segments.append((prev_x, prev_y, self.x, self.y,
-                                      self.pen_color, self.pen_width_name))
 
         if self._marching:
             # clock-marched continuous motion: coarse path steps (OI-28
@@ -4231,12 +3533,6 @@ class _Simulator:
                 return (lo + hi) / 2.0   # as JS: a non-finite bound draws inf / NaN
             lo, hi = int(lo), int(hi)
             lo, hi = min(lo, hi), max(lo, hi)
-            if self.random_policy == "midpoint":
-                return float((lo + hi) / 2.0)
-            if self.random_policy == "low":
-                return float(lo)
-            if self.random_policy == "high":
-                return float(hi)
             return float(self._rng.randint(lo, hi))
 
         if bt == "pg_operator_round":
@@ -4647,21 +3943,17 @@ class _Simulator:
             final_y=self.y,
             final_heading=self.heading,
             min_distance_to_objects=dict(self.min_dist_to_objects),
-            first_object_tolerance_steps=dict(self.first_tol_steps),
-            first_object_segmentation_steps=dict(self.first_seg_steps),
             region_coverage_fractions=coverage_fracs,
             region_cells_visited=cells_visited,
             regions_entered=set(self.regions_entered),
             magnet_fires_at_step=self.magnet_fires_at_step,
             net_displacement_from_spawn=net_disp,
             exits_field_boundary=self.exits_boundary,
-            min_distance_from_center=self.min_dist_center,
             loop_was_capped=self.loop_was_capped,
             loop_cap_steps=list(self.loop_cap_steps),
             unknown_reporter_blocks=list(self.unknown_reporter_blocks),
             unmodeled_constructs=list(self.unmodeled_constructs),
             world_event_log=list(self.world_event_log),
-            pen_segments=list(self.pen_segments),
             origin_x=self.ctx.spawn_x,
             origin_y=self.ctx.spawn_y,
             origin_heading=self.ctx.spawn_heading,
@@ -4680,7 +3972,6 @@ class _Simulator:
             sensor_hats_fired={k: list(v) for k, v in self.sensor_hats_fired.items()},
             blocks_executed=self.blocks_executed,
             sim_time_s=self.sim_time_s,
-            stack_lockout_winner=self.stack_lockout_winner,
             scheduler="cooperative" if self._sequencer is not None
             else "sequential",
             motions_superseded=self.motions_superseded,

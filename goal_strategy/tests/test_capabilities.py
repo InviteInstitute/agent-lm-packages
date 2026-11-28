@@ -1,6 +1,7 @@
 """D2 layer-1 registry: resolution semantics + the graceful-failure wiring
 (Stage 1 of VALIDATION_PLAN.md, 2026-08-21)."""
 from __future__ import annotations
+import pytest
 from goal_strategy.paths import data_path
 
 from goal_strategy.config import load_configs, resolve_capability
@@ -23,6 +24,7 @@ def test_resolution_precedence():
     assert e["class"] == "unsimulable" and e["flag"] == "unmodeled_blocks"
 
 
+@pytest.mark.corpus
 def test_real_registry_covers_every_observed_type():
     """Every block type observed in EITHER corpus resolves to a class other
     than the unknown default — the registry is complete for known data. A
@@ -30,19 +32,13 @@ def test_real_registry_covers_every_observed_type():
     configs/capabilities.yaml, don't widen a family blindly."""
     import re
     import pandas as pd
-    from pathlib import Path
     caps = load_configs("castle_crashers").capabilities
-    root = Path(__file__).resolve().parent.parent
     observed = set()
     for path in (data_path() / "final_code_states.parquet",
                  data_path() / "ccp_run_dataset" / "ccp_runs.parquet"):
         for xml in pd.read_parquet(path)["workspace_xml"]:
             observed |= set(re.findall(r'type="([^"]+)"', xml or ""))
-    unknown = {t for t in observed
-               if resolve_capability(t, caps) == resolve_capability("__nope__", caps)
-               and t not in (caps.get("blocks") or {})}
-    # resolve equality check is structural; be precise: a type is COVERED if
-    # it has an explicit entry or matches a family prefix
+    # A type is COVERED if it has an explicit entry or matches a family prefix.
     fams = tuple((caps.get("families") or {}).keys())
     uncovered = {t for t in observed
                  if t not in (caps.get("blocks") or {})
@@ -50,13 +46,12 @@ def test_real_registry_covers_every_observed_type():
     assert not uncovered, f"unclassified observed types: {sorted(uncovered)}"
 
 
+@pytest.mark.corpus
 def test_dev_corpus_carries_no_unmodeled_flag():
     """All dev-corpus block types are modeled — the registry wiring must not
     change dev profiles (the §6 regression base)."""
     from goal_strategy.profile import _profile
     from goal_strategy.tests.helpers import load_final_code_states
-    from pathlib import Path
-    root = Path(__file__).resolve().parent.parent
     for p in load_final_code_states(str(data_path() / "final_code_states.parquet"))[:8]:
         prof = _profile(p.workspace_xml or "", p.program_id, p.playground_params)
         flags = {f for g in prof.goals for i in g.intent + g.attainment
@@ -64,6 +59,7 @@ def test_dev_corpus_carries_no_unmodeled_flag():
         assert "unmodeled_blocks" not in flags, p.program_id
 
 
+@pytest.mark.corpus
 def test_procedures_call_run_is_no_longer_flagged():
     """OI-23 build (2026-08-24): procedure calls are inline-expanded — the
     Stage-1 unmodeled flag is retired for them; the profile carries no

@@ -4,11 +4,14 @@ round-robin degenerates to sequential and every yield point is unobservable
 programs. Pinned over the whole dev corpus (multi-stack dev programs are
 compared under sequential-vs-sequential as a sanity anchor)."""
 from __future__ import annotations
+import pytest
 
 from goal_strategy.detector.parsing.parse_blocks import parse_workspace
 from goal_strategy.detector.simulation.simulate_path import simulate_path
 
 from goal_strategy.config import load_configs
+
+pytestmark = pytest.mark.corpus   # needs the private goal datasets
 
 
 def _n_started(program) -> int:

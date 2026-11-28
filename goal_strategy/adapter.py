@@ -313,19 +313,6 @@ def _timestamp(event, result):
         result['diagnostics'].append('invalid_timestamp')
 
 
-def goal_profile_from_run_event(event, *, program_id, playground_data=None, end_status=None,
-                                include_timeline=False, include_battery=False,
-                                include_rubric=False, include_rollup=False):
-    if not isinstance(event, dict) or event.get('event_type') != 'runProject':
-        raise ValueError('Expected a runProject event')
-    result = goal_profile_from_content(event.get('content'), program_id=program_id,
-             playground_data=playground_data, end_status=end_status,
-             include_timeline=include_timeline, include_battery=include_battery,
-             include_rubric=include_rubric, include_rollup=include_rollup)
-    _timestamp(event, result)
-    return result
-
-
 def goal_profiles_from_events(events, *, session_id, outcomes_by_run_index=None,
                               include_timeline=False, include_battery=False,
                               include_rubric=False, include_rollup=False):

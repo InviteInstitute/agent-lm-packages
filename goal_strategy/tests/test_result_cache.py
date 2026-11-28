@@ -6,7 +6,7 @@ import copy
 import pytest
 
 import goal_strategy.adapter as adapter
-from goal_strategy import GoalProfileStream, goal_profile, goal_profiles_from_events
+from goal_strategy import GoalProfileStream, goal_profile
 from goal_strategy.config import load_configs
 from goal_strategy.tests.test_hat_execution import drive_for, workspace
 from goal_strategy.tests.test_scheduler import started

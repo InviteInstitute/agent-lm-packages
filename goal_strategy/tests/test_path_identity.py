@@ -39,6 +39,8 @@ from goal_strategy.tests.helpers import load_playground_card, load_final_code_st
 from goal_strategy.detector.parsing.parse_blocks import parse_workspace
 from goal_strategy.detector.simulation.simulate_path import PlaygroundContext, simulate_path
 
+pytestmark = pytest.mark.corpus   # needs the private goal datasets
+
 
 @pytest.fixture(scope="module")
 def frozen() -> pd.DataFrame:

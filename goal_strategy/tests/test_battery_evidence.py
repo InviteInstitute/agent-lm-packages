@@ -129,47 +129,6 @@ def test_ineligible_program_yields_no_evidence():
     assert battery_evidence(xml, "dead") == []
 
 
-def test_family_evidence_profiles_and_shared_structure(cycler):
-    from goal_strategy.battery_evidence import (
-        battery_evidence, family_evidence,
-    )
-    from goal_strategy.testcases import run_battery
-    report = run_battery(RED_CYCLER, "cycler", collect_sims=True)
-    evs = battery_evidence(RED_CYCLER, "cycler")
-    fams = {f.family: f for f in family_evidence(report, evs)}
-    t2 = fams["t2_boundary"]
-    assert set(t2.variants) == {"t2a_direct", "t2b_angled", "t2c_steep"}
-    # raw per-variant outcomes preserved, no level arithmetic
-    assert set(t2.outcome_profile["stays_on_island"]) == set(t2.variants)
-    # the cycler's forever loop is the same exercised structure everywhere
-    assert "f1" in t2.shared_structure
-
-
-def test_dimension_u_map_routes_abstentions(pusher):
-    """The U-map routes each scenario's abstention to every dimension its
-    variables feed, and informative scenarios to `informative`. (Post the
-    T6 assured-detection redesign the cue-pusher activates T6, so the
-    routing is asserted structurally: every abstained scenario evidence
-    lands under its dimensions' `abstained`, and at least one dimension
-    has informative scenarios.)"""
-    from goal_strategy.battery_evidence import (
-        battery_evidence, dimension_u_map, load_evidence_registry,
-    )
-    evs = battery_evidence(CUE_PUSHER, "pusher")
-    reg = load_evidence_registry()
-    umap = dimension_u_map(evs, reg)
-    abstained_scen = {e.scenario_id for e in evs if e.abstained}
-    informative_scen = {e.scenario_id for e in evs if not e.abstained}
-    # every abstained scenario that feeds recovery is carried as a U cell
-    routed = {sid for sid, _ in umap["recovery"]["abstained"]}
-    assert routed <= abstained_scen
-    if abstained_scen:
-        assert routed  # at least one abstention routed somewhere
-    # informative scenarios populate their dimensions
-    assert any(sid in informative_scen
-               for sid in umap["task_state_regulation"]["informative"])
-
-
 # ---- construct-separability layer (reviewer-ruled 2026-09-05) ----
 
 def test_task_semantic_variables_on_the_pusher(pusher):
@@ -200,8 +159,8 @@ def test_registry_v2_schema():
     and non-scoring roles (validation/diagnostic/metadata, 2026-09-09)
     have no primary — they corroborate, explain, or gate, never
     establish."""
-    from goal_strategy.battery_evidence import load_evidence_registry
-    reg = load_evidence_registry()
+    from goal_strategy.config import load_testcase_card
+    reg = load_testcase_card("castle_crashers", "_evidence")
     dims = set(reg["dimensions"])
     for name, var in reg["variables"].items():
         assert var.get("role") in ("indicator", "validation",
@@ -211,18 +170,6 @@ def test_registry_v2_schema():
         assert set(prim) <= dims and set(var.get("supporting") or []) <= dims
         if var["role"] != "indicator":
             assert prim == [], name
-
-
-def test_dimension_u_map_role_buckets(pusher):
-    from goal_strategy.battery_evidence import (
-        dimension_u_map, load_evidence_registry)
-    umap = dimension_u_map(list(pusher.values()), load_evidence_registry())
-    rec = umap["recovery"]
-    assert set(rec) >= {"abstained", "informative", "informative_primary",
-                        "informative_supporting", "informative_validation"}
-    # recovery has primary indicators (corrective/reassessment) — the
-    # primary bucket must populate for a program with boundary work
-    assert rec["informative_primary"]
 
 
 # ---- OI-36/OI-37 (reviewer-ruled 2026-09-11): failure-scoped windows,
